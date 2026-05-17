@@ -1,0 +1,131 @@
+{
+  "aiServers": {
+    "title": "AI Servers",
+    "createServer": "Create Server",
+    "editScript": "Edit Script",
+    "terminal": "Terminal",
+    "delete": "Delete",
+    "openInFileBrowser": "Open in File Browser",
+    "actions": {
+      "install": "Install",
+      "start": "Start",
+      "stop": "Stop",
+      "uninstall": "Uninstall"
+    },
+    "status": {
+      "ready": "READY",
+      "installing": "INSTALLING",
+      "running": "RUNNING",
+      "idle": "IDLE"
+    },
+    "logs": {
+      "title": "Server Logs",
+      "progress": "Progress",
+      "waiting": "Waiting for process..."
+    },
+    "modal": {
+      "editTitle": "Edit AI Server",
+      "newTitle": "New AI Server Project",
+      "nameLabel": "Server Name",
+      "namePlaceholder": "e.g. Local-Ollama-V1",
+      "scriptLabel": "Install Script (JSON Steps)",
+      "cancel": "Cancel",
+      "updateAction": "Update Script",
+      "createAction": "Create & Install"
+    },
+    "errors": {
+      "invalidJson": "Invalid JSON script format"
+    }
+  },
+  "explore": {
+    "title": "Explore Applications",
+    "status": {
+      "loading": "Loading catalog...",
+      "installed": "Installed"
+    },
+    "filter": {
+      "search_placeholder": "Search applications...",
+      "all_categories": "All Categories",
+      "all_types": "All Types",
+      "all_platforms": "All Platforms",
+      "clear": "Clear Filters"
+    },
+    "label": {
+      "type": "Type",
+      "version": "Version",
+      "platform": "Platform",
+      "runtime": "Runtime",
+      "cpu": "CPU",
+      "memory": "Memory",
+      "storage": "Storage",
+      "gpu": "GPU",
+      "installed_at": "Installed At",
+      "installed_by": "Installed By",
+      "installed_path": "Installed Path",
+      "url": "URL"
+    },
+    "types": {
+      "llm": "LLM",
+      "tool": "Tool",
+      "agent": "Agent",
+      "dataset": "Dataset",
+      "other": "Other"
+    },
+    "platforms": {
+      "windows": "Windows",
+      "linux": "Linux",
+      "mac": "macOS",
+      "any": "Any"
+    },
+    "runtimes": {
+      "apptainer": "Apptainer",
+      "docker": "Docker",
+      "podman": "Podman",
+      "native": "Native"
+    },
+    "action": {
+      "install": "Install"
+    },
+    "message": {
+      "no_apps": "No applications found matching your criteria."
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "theme": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "saved_settings": "Saved Settings",
+    "welcome": "Welcome to AiSphere",
+    "apps": "Installed Apps",
+    "active_apps": "Active applications",
+    "models": "Available Models",
+    "ready_models": "AI models ready",
+    "chats": "Chat Sessions",
+    "conversations": "Chat conversations",
+    "root_directory": "AiSphere Root Directory"
+  },
+  "sidebar": {
+    "home": "Home",
+    "runtimes": "Runtimes",
+    "chat": "Chat",
+    "apps": "Apps",
+    "aiProviders": "AI Providers",
+    "aiServers": "AI Servers",
+    "llms": "LLMs",
+    "downloads": "Downloads",
+    "explore": "Explore",
+    "settings": "Settings",
+    "login_guest": "Login / Guest"
+  },
+  "app": {
+    "start": "Start",
+    "stop": "Stop",
+    "restart": "Restart",
+    "delete": "Delete",
+    "uninstall": "Uninstall",
+    "uninstall_confirm": "Are you sure you want to uninstall this application"
+  }
+}

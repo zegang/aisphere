@@ -1,0 +1,710 @@
+import { useEffect, useRef, useState } from 'react';
+import { useAppStore } from '@/stores/appStore';
+import { useAiSphereStore } from '@/stores/aiSphereStore';
+import { 
+  ArrowLeft, Box, Calendar, Terminal, Play, Square, Trash2, 
+  Shield, Cpu, Layout, Tag, Folder, X, Maximize, Minimize2, Activity, Info,
+  Settings, Edit2, Save, AlertCircle, FileText, ExternalLink, Globe
+} from 'lucide-react';
+import { useTranslation } from '@/i18n';
+import { Terminal as XTerm } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
+import { UTIL_OPEN_PATH, APP_STATUS } from '@/shared/channel-types';
+import 'xterm/css/xterm.css';
+
+function BottomTerminal({ appId, onClose, type = 'shell' }: { appId: string; onClose: () => void; type?: 'shell' | 'logs' }) {
+  const terminalRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<XTerm | null>(null);
+  const [height, setHeight] = useState(300);
+  const [isResizing, setIsResizing] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  const DEFAULT_HEIGHT = 300;
+
+  useEffect(() => {
+    if (!isResizing) return;
+    
+    const handleMouseMove = (e: MouseEvent) => {
+      const newHeight = window.innerHeight - e.clientY;
+      // Constraints: Min 100px, Max viewport height minus workspace header
+      if (newHeight > 100 && newHeight < window.innerHeight - 150) {
+        setHeight(newHeight);
+        if (isMaximized) setIsMaximized(false);
+      }
+    };
+
+    const handleMouseUp = () => setIsResizing(false);
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isResizing, isMaximized]);
+
+  useEffect(() => {
+    if (!terminalRef.current) return;
+
+    const term = new XTerm({
+      theme: { background: '#1a1b26', foreground: '#a9b1d6' },
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'JetBrains Mono, Menlo, Monaco, Courier New, monospace',
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(terminalRef.current);
+    fitAddon.fit();
+    xtermRef.current = term;
+
+    const ipcChannel = type === 'shell' ? 'terminal:init' : 'terminal:logs';
+    const outputId = type === 'shell' ? appId : `${appId}:logs`;
+
+    window.electron.invoke(ipcChannel as any, appId);
+
+    const outputHandler = (data: any) => term.write(String(data));
+    window.electron.on(`terminal:output:${outputId}`, outputHandler);
+
+    if (type === 'shell') {
+      term.onData((data) => {
+        window.electron.invoke('terminal:input' as any, { id: appId, data });
+      });
+    }
+
+    const handleResize = () => {
+      fitAddon.fit();
+      window.electron.invoke((type === 'shell' ? 'terminal:resize' : 'terminal:resize' /* Log resize handled same */) as any, {
+        id: appId,
+        cols: term.cols,
+        rows: term.rows,
+      });
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.electron.removeListener(`terminal:output:${outputId}`, outputHandler);
+      term.dispose();
+    };
+  }, [appId, isMaximized, height, type]);
+
+  const terminalStyle = {
+    height: isMaximized ? '100%' : `${height}px`,
+  };
+
+  return (
+    <div 
+      className={`relative flex flex-col bg-[#1a1b26] border border-white/10 shadow-2xl transition-[height] duration-200 ${isMaximized ? 'absolute inset-0 z-40' : 'mx-4 mb-4 rounded-xl overflow-hidden'}`}
+      style={terminalStyle}
+    >
+      {!isMaximized && (
+        <div
+          onMouseDown={() => setIsResizing(true)}
+          className="absolute top-0 left-0 right-0 h-1 cursor-ns-resize hover:bg-blue-500/50 transition-colors z-50"
+        />
+      )}
+      <div className="flex items-center justify-between px-4 py-2 bg-[#2d324a] border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-2 text-xs font-medium text-gray-100">
+          {type === 'shell' ? (
+            <><Terminal className="w-3.5 h-3.5" /> Interactive Shell</>
+          ) : (
+            <><FileText className="w-3.5 h-3.5" /> Application Logs</>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsMaximized(true)}
+            className="p-1 hover:bg-white/10 rounded transition-colors text-gray-300 hover:text-white"
+            title="Maximize"
+          >
+            <Maximize className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => {
+              setIsMaximized(false);
+              setHeight(DEFAULT_HEIGHT);
+            }}
+            className="p-1 hover:bg-white/10 rounded transition-colors text-gray-300 hover:text-white"
+            title="Minimize to Default"
+          >
+            <Minimize2 className="w-4 h-4" />
+          </button>
+          <button onClick={onClose} className="p-1 hover:bg-white/10 rounded transition-colors text-gray-300 hover:text-white" title="Close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+      <div ref={terminalRef} className="flex-1 p-2 overflow-hidden" />
+    </div>
+  );
+}
+
+export default function AppWorkspace() {
+  const { t } = useTranslation();
+  const { 
+    applications, 
+    selectedId, 
+    startApplication, 
+    stopApplication, 
+    uninstallApplication, 
+    openApplicationShell,
+    activeTerminalId,
+    setActiveTerminalId,
+    inspectApplication,
+    updateApplication,
+    refreshApplicationStatus
+  } = useAppStore();
+  const setView = useAiSphereStore(s => s.setView);
+  
+  const [activeLogId, setActiveLogId] = useState<string | null>(null);
+  const [activeWebUrl, setActiveWebUrl] = useState<string | null>(null);
+  const [inspectData, setInspectData] = useState<any>(null);
+  const [isEditingRuntime, setIsEditingRuntime] = useState(false);
+  const [tempRuntime, setTempRuntime] = useState({
+    args: '',
+    options: '',
+    startscript: ''
+  });
+  const app = applications.find(a => a.id === selectedId);
+  const appStatus = app?.task?.status || 'stopped';
+
+  // Extract host ports from runtime options to provide "Open Web" links
+  const hostPorts = app?.task?.options?.reduce((acc: string[], opt, i, arr) => {
+    let port = '';
+    if ((opt === '-p' || opt === '--publish') && i + 1 < arr.length) {
+      const parts = arr[i + 1].split(':');
+      port = parts.length >= 2 ? (parts.length === 3 ? parts[1] : parts[0]) : parts[0];
+    } else if (opt.startsWith('--publish=')) {
+      const parts = opt.split('=')[1].split(':');
+      port = parts.length >= 2 ? (parts.length === 3 ? parts[1] : parts[0]) : parts[0];
+    }
+    if (port && /^\d+$/.test(port) && !acc.includes(port)) acc.push(port);
+    return acc;
+  }, []) || [];
+
+  if (!app) {
+    return (
+      <div className="p-6">
+        <button onClick={() => setView('apps')} className="flex items-center gap-2 text-blue-600 mb-4 hover:underline">
+          <ArrowLeft className="w-4 h-4" /> Back to Apps
+        </button>
+        <div className="bg-light-surface dark:bg-dark-surface rounded-xl p-8 border border-light-border dark:border-dark-border text-center">
+          <p className="text-light-subtle dark:text-dark-subtle">Application not found.</p>
+        </div>
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    if (app) {
+      refreshApplicationStatus(app.id);
+      inspectApplication(app.id).then(data => setInspectData(data));
+    }
+  }, [app?.id, inspectApplication, refreshApplicationStatus]);
+
+  const handleUninstall = async () => {
+    if (window.confirm(t('app.uninstall_confirm') + '?' || 'Are you sure you want to uninstall this application?')) {
+      setView('apps');
+      await uninstallApplication(app.id);
+    }
+  };
+
+  const handleSaveRuntime = async () => {
+    // Parse space-separated strings into arrays as required by the Application type
+    const args = tempRuntime.args.split(' ').filter(Boolean);
+    const options = tempRuntime.options.split(' ').filter(Boolean);
+    
+    const success = await updateApplication(app.id, { 
+      runtime: { 
+        ...app.runtime, 
+        args,
+        options,
+        startscript: tempRuntime.startscript
+      } 
+    });
+    if (success) {
+      setIsEditingRuntime(false);
+    }
+  };
+
+  return (
+    <div className="relative flex flex-col h-full overflow-hidden bg-light-bg dark:bg-dark-bg">
+      {/* Header Bar */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-light-border dark:border-dark-border bg-light-surface dark:bg-dark-surface shrink-0">
+        <div className="flex items-center gap-4 min-w-0">
+          <button 
+            onClick={() => setView('apps')}
+            className="p-2 hover:bg-light-muted dark:hover:bg-dark-muted rounded-full transition-colors shrink-0"
+            title="Back to Applications"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-3 min-w-0">
+            {app.icon ? (
+              <img src={app.icon} alt="" className="w-10 h-10 rounded-lg object-contain bg-white shrink-0 shadow-sm" />
+            ) : (
+              <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 shrink-0">
+                <Box className="w-6 h-6" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold truncate leading-tight">{app.name}</h2>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-xs text-light-subtle dark:text-dark-subtle font-mono">v{app.version}</span>
+                <span
+                  className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
+                    appStatus === 'running' || appStatus === 'starting'
+                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : appStatus === 'failed'
+                      ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                      : 'bg-gray-100 text-gray-600 dark:bg-dark-muted dark:text-dark-subtle'
+                  }`}
+                >
+                  {appStatus}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {(appStatus === 'running' || appStatus === 'starting' || appStatus === 'failed' || appStatus === 'stopping') && (
+            <button
+              onClick={() => stopApplication(app.id)}
+              disabled={appStatus === 'stopping'}
+              className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/20 dark:text-orange-400 transition-colors"
+            >
+              <Square className="w-4 h-4 fill-current" /> {appStatus === 'failed' || appStatus === 'starting' ? 'Abort' : t('app.stop')}
+            </button>
+          )}
+
+          {(appStatus === 'stopped' || appStatus === 'failed' || appStatus === 'stopping' || appStatus === 'starting') && (
+            <button
+              onClick={() => startApplication(app.id)}
+              disabled={appStatus === 'stopping' || appStatus === 'starting'}
+              className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            >
+              <Play className="w-4 h-4 fill-current" /> {appStatus === 'failed' ? t('app.restart') : t('app.start')}
+            </button>
+          )}
+          <button
+            onClick={handleUninstall}
+            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-light-border dark:border-dark-border hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/10 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" /> {t('app.uninstall')}
+          </button>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-6xl mx-auto space-y-6">
+          {appStatus === 'failed' && app.error && (
+            <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/50 rounded-xl p-4 flex items-start gap-3 text-red-700 dark:text-red-400 animate-in fade-in slide-in-from-top-2 duration-300">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h4 className="font-bold text-sm">Launch Failed</h4>
+                <p className="text-xs mt-1 opacity-90 leading-relaxed font-mono break-all">{app.error}</p>
+              </div>
+              <button 
+                onClick={() => updateApplication(app.id, { error: undefined })}
+                className="p-1 hover:bg-red-200/50 dark:hover:bg-red-800/30 rounded transition-colors"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Column */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Active Processes Section */}
+              {app.task && (
+                <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm overflow-hidden relative">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-orange-500/5 blur-3xl rounded-full -mr-16 -mt-16" />
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-orange-500" /> Active Processes
+                  </h3>
+                  <div className="space-y-3">
+                    <div key={app.task.id || 'starting'} className="relative overflow-hidden flex flex-col p-4 bg-light-bg/50 dark:bg-dark-bg/50 backdrop-blur-sm rounded-xl border border-light-border dark:border-dark-border group hover:border-orange-500/30 transition-all">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className="relative">
+                            <div className="p-2.5 bg-white dark:bg-dark-muted rounded-xl shadow-sm border border-light-border dark:border-dark-border">
+                              <Cpu className="w-5 h-5 text-blue-500" />
+                            </div>
+                            {app.task.status === 'running' && (
+                              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                              </span>
+                            )}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-mono font-bold text-light-default dark:text-dark-default">
+                                ID: {app.task.id?.split('-')[0] || '...'}
+                              </p>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-bold uppercase">
+                                {app.task.rc}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-light-subtle dark:text-dark-subtle font-medium mt-0.5">
+                              Runtime instance managed via {app.task.rc}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className={`text-xs font-bold px-3 py-1 rounded-lg inline-flex items-center gap-2 ${
+                            app.task.status === 'running' 
+                              ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400' 
+                              : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${app.task.status === 'running' ? 'bg-green-500' : 'bg-yellow-500'}`} />
+                            {app.task.status.toUpperCase()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {app.task.status === 'running' && (
+                        <div className="flex items-center gap-2 mt-4 pt-4 border-t border-light-border dark:border-dark-border">
+                          <button
+                            onClick={() => setActiveTerminalId(app.id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400 transition-colors uppercase tracking-tight"
+                          >
+                            <Terminal className="w-3.5 h-3.5" /> Console
+                          </button>
+                          <button
+                            onClick={() => openApplicationShell(app.id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400 transition-colors uppercase tracking-tight"
+                          >
+                            <Terminal className="w-3.5 h-3.5" /> Shell
+                          </button>
+                          <button
+                            onClick={() => {
+                              setActiveTerminalId(null);
+                              setActiveLogId(app.id);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 transition-colors uppercase tracking-tight"
+                          >
+                            <FileText className="w-3.5 h-3.5" /> Logs
+                          </button>
+                          {hostPorts.map(port => (
+                            <button
+                              key={port}
+                              onClick={() => setActiveWebUrl(`http://localhost:${port}`)}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 transition-colors uppercase tracking-tight"
+                              title={`Open http://localhost:${port}`}
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" /> Web:{port}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {/* Runtime Configuration Panel */}
+              <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <Settings className="w-5 h-5 text-gray-500" /> Runtime Configuration
+                  </h3>
+                  {!isEditingRuntime ? (
+                    <button 
+                      onClick={() => {
+                        setIsEditingRuntime(true);
+                        setTempRuntime({
+                          options: app.runtime.options?.join(' ') || '',
+                          startscript: app.runtime.startscript || '',
+                          args: app.runtime.args?.join(' ') || ''
+                        });
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                    >
+                      <Edit2 className="w-3 h-3" /> Edit
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={handleSaveRuntime}
+                        className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1"
+                      >
+                        <Save className="w-3 h-3" /> Save
+                      </button>
+                      <button 
+                        onClick={() => setIsEditingRuntime(false)}
+                        className="text-xs text-red-600 hover:text-red-700 flex items-center gap-1"
+                      >
+                        <X className="w-3 h-3" /> Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-1">Runtime Type</h4>
+                      <p className="text-sm font-medium capitalize">{app.runtime.runtime}</p>
+                    </div>
+                  </div>
+
+                  {/* Options */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-2">Runtime Options</h4>
+                    {isEditingRuntime ? (
+                      <input
+                        type="text"
+                        value={tempRuntime.options}
+                        onChange={(e) => setTempRuntime({...tempRuntime, options: e.target.value})}
+                        className="w-full px-3 py-2 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                        placeholder="e.g. --nv --bind /data:/data"
+                      />
+                    ) : (
+                      <div className="p-3 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border">
+                        {app.runtime.options && app.runtime.options.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {app.runtime.options.map((opt, i) => (
+                              <code key={i} className="text-xs font-mono bg-light-surface dark:bg-dark-surface px-1.5 py-0.5 rounded border border-light-border dark:border-dark-border">
+                                {opt}
+                              </code>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-light-subtle dark:text-dark-subtle italic">No runtime options configured</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Start Script */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-2">Start Script / Entrypoint</h4>
+                    {isEditingRuntime ? (
+                      <input
+                        type="text"
+                        value={tempRuntime.startscript}
+                        onChange={(e) => setTempRuntime({...tempRuntime, startscript: e.target.value})}
+                        className="w-full px-3 py-2 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                        placeholder="e.g. /app/entrypoint.sh"
+                      />
+                    ) : (
+                      <div className="p-3 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border">
+                        {app.runtime.startscript ? (
+                          <code className="text-xs font-mono">{app.runtime.startscript}</code>
+                        ) : (
+                          <span className="text-xs text-light-subtle dark:text-dark-subtle italic">No custom start script configured</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Arguments */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-2">Default Arguments</h4>
+                    {isEditingRuntime ? (
+                      <input
+                        type="text"
+                        value={tempRuntime.args}
+                        onChange={(e) => setTempRuntime({...tempRuntime, args: e.target.value})}
+                        className="w-full px-3 py-2 text-sm bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg focus:outline-none focus:border-blue-500 font-mono"
+                        placeholder="e.g. server --host 0.0.0.0"
+                      />
+                    ) : (
+                      <div className="p-3 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border">
+                        {app.runtime.args && app.runtime.args.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {app.runtime.args.map((arg, i) => (
+                              <code key={i} className="text-xs font-mono bg-light-surface dark:bg-dark-surface px-1.5 py-0.5 rounded border border-light-border dark:border-dark-border">
+                                {arg}
+                              </code>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-light-subtle dark:text-dark-subtle italic">No default arguments configured</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </section>
+
+              <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2"><Layout className="w-5 h-5 text-blue-500" /> About</h3>
+                <p className="text-sm text-light-subtle dark:text-dark-subtle leading-relaxed whitespace-pre-wrap">
+                  {app.description || 'No description provided.'}
+                </p>
+              </section>
+
+              {/* Image Metadata Section (Inspect) */}
+              {inspectData && (
+                <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <Info className="w-5 h-5 text-blue-500" /> Image Metadata
+                  </h3>
+                  <div className="space-y-4">
+                    {inspectData.data?.attributes?.labels && (
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-2">Internal Labels</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {Object.entries(inspectData.data.attributes.labels).map(([key, value]) => (
+                            <div key={key} className="flex flex-col p-2 bg-light-bg dark:bg-dark-bg rounded border border-light-border dark:border-dark-border overflow-hidden">
+                              <span className="text-[10px] text-light-subtle dark:text-dark-subtle font-mono truncate">{key}</span>
+                              <span className="text-xs font-medium truncate">{String(value)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {inspectData.data?.attributes?.deffile && (
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-1">Definition File</h4>
+                        <pre className="text-[10px] font-mono p-3 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border block max-h-40 overflow-y-auto whitespace-pre-wrap">
+                          {inspectData.data.attributes.deffile}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
+
+              <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2"><Shield className="w-5 h-5 text-green-500" /> Technical Specifications</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-1">Architecture</h4>
+                      <p className="text-sm font-medium uppercase">{app.requirements.cpu}</p>
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-1">Platform Compatibility</h4>
+                      <p className="text-sm font-medium capitalize">{app.requirements.platform}</p>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-light-subtle dark:text-dark-subtle mb-1">Storage Required</h4>
+                      <p className="text-sm font-medium">{app.requirements.storage}</p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+            </div>
+
+            {/* Right Column */}
+            <div className="space-y-6">
+              <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                <h3 className="text-lg font-semibold mb-4">Metadata</h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center pb-3 border-b border-light-border dark:border-dark-border">
+                    <span className="text-sm text-light-subtle dark:text-dark-subtle">Category</span>
+                    <span className="text-sm font-medium">{app.category}</span>
+                  </div>
+                  <div className="flex justify-between items-center pb-3 border-b border-light-border dark:border-dark-border">
+                    <span className="text-sm text-light-subtle dark:text-dark-subtle">Type</span>
+                    <span className="text-sm font-medium capitalize">{app.type}</span>
+                  </div>
+                  {app.install?.installed_at && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-light-subtle dark:text-dark-subtle">Installed On</span>
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                        <span>{new Date(app.install.installed_at).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2"><Cpu className="w-5 h-5 text-purple-500" /> Hardware Requirements</h3>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="p-4 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border">
+                    <h4 className="text-xs font-bold text-light-subtle dark:text-dark-subtle mb-1">Memory</h4>
+                    <p className="text-sm font-medium">{app.requirements.memory}</p>
+                  </div>
+                  <div className="p-4 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border">
+                    <h4 className="text-xs font-bold text-light-subtle dark:text-dark-subtle mb-1">Graphics (GPU)</h4>
+                    <p className="text-sm font-medium">{app.requirements.gpu}</p>
+                  </div>
+                </div>
+              </section>
+
+              <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2"><Tag className="w-5 h-5" /> Labels</h3>
+                <div className="flex flex-wrap gap-2">
+                  {app.labels.map((label, idx) => (
+                    <span 
+                      key={idx} 
+                      className="px-2.5 py-1 text-xs font-medium rounded rounded-md bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300 border border-blue-100 dark:border-blue-800/30"
+                    >
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </section>
+
+              {app.install?.installed_package && (
+                <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
+                  <h3 className="text-lg font-semibold mb-2 flex items-center gap-2"><Folder className="w-5 h-5 text-orange-500" /> Location</h3>
+                  <p className="text-xs text-light-subtle dark:text-dark-subtle mb-3 leading-relaxed">Local installation path:</p>
+                  <code className="text-[10px] font-mono p-3 bg-light-bg dark:bg-dark-bg rounded-lg border border-light-border dark:border-dark-border block break-all text-blue-600 dark:text-blue-400">
+                    {app.install.installed_package}
+                  </code>
+                </section>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {activeTerminalId && (
+        <BottomTerminal appId={activeTerminalId} onClose={() => setActiveTerminalId(null)} />
+      )}
+      {activeLogId && (
+        <BottomTerminal appId={activeLogId} type="logs" onClose={() => setActiveLogId(null)} />
+      )}
+
+      {/* Internal Web View Overlay */}
+      {activeWebUrl && (
+        <div className="absolute inset-0 z-30 flex flex-col bg-light-bg dark:bg-dark-bg animate-in fade-in zoom-in-95 duration-200">
+          <div className="flex items-center justify-between px-4 py-2 bg-light-surface dark:bg-dark-surface border-b border-light-border dark:border-dark-border shrink-0 shadow-sm">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="p-1.5 bg-blue-50 dark:bg-blue-900/20 rounded">
+                <Globe className="w-4 h-4 text-blue-600" />
+              </div>
+              <span className="text-xs font-mono font-medium text-light-subtle dark:text-dark-subtle truncate max-w-md">
+                {activeWebUrl}
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => window.electron.invoke(UTIL_OPEN_PATH as any, activeWebUrl)}
+                className="p-1.5 hover:bg-light-muted dark:hover:bg-dark-muted rounded text-light-subtle dark:text-dark-subtle transition-colors"
+                title="Open in External Browser"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </button>
+              <button onClick={() => setActiveWebUrl(null)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 rounded transition-colors text-light-subtle dark:text-dark-subtle">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          <iframe 
+            src={activeWebUrl} 
+            className="flex-1 w-full h-full border-none bg-white"
+            title="Application Web Interface"
+          />
+        </div>
+      )}
+    </div>
+  );
+}

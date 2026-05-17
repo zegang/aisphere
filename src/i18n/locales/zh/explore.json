@@ -1,0 +1,55 @@
+{
+  "explore": {
+    "title": "浏览应用",
+    "status": {
+      "loading": "正在加载目录...",
+      "installed": "已安装"
+    },
+    "filter": {
+      "search_placeholder": "搜索应用...",
+      "all_categories": "所有分类",
+      "all_types": "所有类型",
+      "all_platforms": "所有平台",
+      "clear": "清除筛选"
+    },
+    "label": {
+      "type": "类型",
+      "version": "版本",
+      "platform": "平台",
+      "runtime": "运行环境",
+      "cpu": "处理器",
+      "memory": "内存",
+      "storage": "存储",
+      "gpu": "显卡",
+      "installed_at": "安装时间",
+      "installed_by": "安装者",
+      "installed_path": "安装路径",
+      "url": "链接"
+    },
+    "types": {
+      "llm": "大模型",
+      "tool": "工具",
+      "agent": "智能体",
+      "dataset": "数据集",
+      "other": "其他"
+    },
+    "runtimes": {
+      "apptainer": "Apptainer",
+      "docker": "Docker",
+      "podman": "Podman",
+      "native": "Native"
+    },
+    "platforms": {
+      "windows": "Windows",
+      "linux": "Linux",
+      "mac": "macOS",
+      "any": "通用"
+    },
+    "action": {
+      "install": "安装"
+    },
+    "message": {
+      "no_apps": "未找到符合条件的应用。"
+    }
+  }
+}
