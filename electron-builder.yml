@@ -1,0 +1,65 @@
+appId: io.aisphere
+productName: aisphere
+copyright: Copyright © 2026 AiSphere
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+
+extraResources:
+  - from: resources
+    to: .
+    filter:
+      - "**/*"
+      - "!icons/**/*"
+
+win:
+  icon: resources/icons/
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: resources/icons/icon.jpeg
+  uninstallerIcon: resources/icons/icon.jpeg
+  menuCategory: true
+  shortcutName: AiSphere
+  createDesktopShortcut: true
+  include: resources/win/installer.nsh
+
+mac:
+  icon: resources/icons
+  category: public.app-category.developer-tools
+  entitlementsInherit: null
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+linux:
+  icon: resources/icons/icon.jpeg
+  category: Utility
+  executableName: aisphere
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64, arm64]
+  artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+  desktop:
+    Name: AiSphere
+    Commnet: AI under your control
+
+deb:
+  afterInstall: resources/scripts/linux/after_install.sh
+  afterRemove: resources/scripts/linux/after_remove.sh
+
+publish: null

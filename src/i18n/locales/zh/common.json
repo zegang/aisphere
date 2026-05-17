@@ -1,0 +1,119 @@
+{
+  "aiServers": {
+    "title": "AI 服务器",
+    "createServer": "创建服务器",
+    "editScript": "编辑脚本",
+    "terminal": "终端",
+    "delete": "删除",
+    "openInFileBrowser": "在文件浏览器中打开",
+    "actions": {
+      "install": "安装",
+      "start": "启动",
+      "stop": "停止",
+      "uninstall": "卸载"
+    },
+    "status": {
+      "ready": "就绪",
+      "installing": "安装中",
+      "running": "运行中",
+      "idle": "空闲"
+    },
+    "logs": {
+      "title": "服务器日志",
+      "progress": "进度",
+      "waiting": "等待进程..."
+    },
+    "modal": {
+      "editTitle": "编辑 AI 服务器",
+      "newTitle": "新建 AI 服务器项目",
+      "nameLabel": "服务器名称",
+      "namePlaceholder": "例如 Local-Ollama-V1",
+      "scriptLabel": "安装脚本 (JSON 步骤)",
+      "cancel": "取消",
+      "updateAction": "更新脚本",
+      "createAction": "创建并安装"
+    }
+  },
+  "explore": {
+    "title": "浏览应用",
+    "status": {
+      "loading": "正在加载目录...",
+      "installed": "已安装"
+    },
+    "filter": {
+      "search_placeholder": "搜索应用...",
+      "all_categories": "所有分类",
+      "all_types": "所有类型",
+      "all_platforms": "所有平台",
+      "clear": "清除筛选"
+    },
+    "label": {
+      "type": "类型",
+      "version": "版本",
+      "platform": "平台",
+      "runtime": "运行环境",
+      "cpu": "处理器",
+      "memory": "内存",
+      "storage": "存储",
+      "gpu": "显卡",
+      "installed_at": "安装时间",
+      "installed_by": "安装者",
+      "installed_path": "安装路径",
+      "url": "链接"
+    }
+  },
+  "settings": {
+    "title": "设置",
+    "language": "应用语言",
+    "theme": "主题",
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统",
+    "saved_settings": "已保存的设置",
+    "welcome": "欢迎使用 AiSphere",
+    "apps": "已安装应用",
+    "active_apps": "活跃中的应用程序",
+    "models": "可用模型",
+    "ready_models": "已准备就绪的 AI 模型",
+    "chats": "聊天会话",
+    "conversations": "聊天对话记录",
+    "root_directory": "AiSphere 根目录"
+  },
+  "sidebar": {
+    "home": "主页",
+    "runtimes": "运行时",
+    "chat": "聊天",
+    "apps": "应用",
+    "aiProviders": "AI 提供商",
+    "aiServers": "AI 服务器",
+    "llms": "大语言模型",
+    "downloads": "下载",
+    "explore": "探索",
+    "settings": "设置",
+    "login_guest": "登录 / 游客"
+  },
+  "app": {
+    "id": "ID",
+    "name": "名称",
+    "version": "版本",
+    "icon": "图标",
+    "description": "描述",
+    "category": "分类",
+    "type": "类型",
+    "runtime": "运行环境",
+    "labels": "标签",
+    "requirements": "要求",
+    "requirements.platform": "平台",
+    "requirements.cpu": "处理器",
+    "requirements.memory": "内存",
+    "requirements.storage": "存储",
+    "requirements.gpu": "显卡",
+    "package": "包",
+    "start": "启动",
+    "stop": "停止",
+    "restart": "重启",
+    "delete": "删除",
+    "uninstall": "卸载",
+    "uninstall_confirm": "您确定要卸载此应用程序吗"
+  }
+}

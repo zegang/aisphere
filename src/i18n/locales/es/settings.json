@@ -1,0 +1,16 @@
+{
+  "settings": "Settings",
+  "language": "App Language",
+  "theme": "Theme",
+  "light": "Light",
+  "dark": "Dark",
+  "system": "System",
+  "welcome": "Welcome to AiSphere",
+  "apps": "Installed Apps",
+  "models": "Available Models",
+  "chats": "Chat Sessions",
+  "active_apps": "Active applications",
+  "ready_models": "AI models ready",
+  "conversations": "Chat conversations",
+  "saved_settings": "Saved Settings"
+}

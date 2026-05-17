@@ -1,0 +1,13 @@
+{
+  "title": "Mi Impresionante Aplicación",
+  "buttons": {
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "submit": "Enviar"
+  },
+  "welcomeMessage": "¡Bienvenido, {{name}}!",
+  "status": {
+    "loading": "Cargando...",
+    "error": "Ocurrió un error."
+  }
+}
