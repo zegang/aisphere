@@ -1,0 +1,3 @@
+[submodule "vllm_src"]
+	path = electron/tests/vllm-chat/vllm_src
+	url = git@github.com:zegang/vllm.git
