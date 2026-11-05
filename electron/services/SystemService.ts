@@ -1,16 +1,17 @@
-import { app, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import { join } from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { SYSTEM_INFO } from '../../src/shared/channel-types';
 import { LogService } from './LogService';
-import { IService, ServiceName } from '../types/IService';
+import { Service, ServiceName } from '../types/IService';
 import { ServiceContainer } from './ServiceContainer';
+import { getDataRootDir } from '../utils/app-paths';
 
 const execAsync = promisify(exec);
 
-export class SystemService implements IService {
+export class SystemService implements Service {
   name = ServiceName.SystemService;
 
   constructor() { }
@@ -78,7 +79,7 @@ export class SystemService implements IService {
       return {
         success: true,
         data: {
-          data_path: app.getAppPath(),
+          data_path: getDataRootDir(),
           platform: os.platform(),
           os_type: os.type(),
           release: os.release(),

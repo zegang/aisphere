@@ -48,6 +48,7 @@
       "all_categories": "All Categories",
       "all_types": "All Types",
       "all_platforms": "All Platforms",
+      "all_runtimes": "All Runtimes",
       "clear": "Clear Filters"
     },
     "label": {
@@ -74,6 +75,7 @@
       "apptainer": "Apptainer",
       "docker": "Docker",
       "podman": "Podman",
+      "conda": "Conda",
       "native": "Native"
     },
     "action": {
@@ -98,7 +100,10 @@
     "ready_models": "AI models ready",
     "chats": "Chat Sessions",
     "conversations": "Chat conversations",
-    "root_directory": "AiSphere Root Directory"
+    "root_directory": "AiSphere Root Directory",
+    "browse": "Browse…",
+    "open_directory": "Open Directory",
+    "select_root_directory": "Select AiSphere Root Directory"
   },
   "sidebar": {
     "note": "Note",

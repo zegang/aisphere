@@ -1,4 +1,4 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RuntimeInstallStatusEvent } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
   SETTING_LIST,
@@ -8,6 +8,7 @@ import {
   AllChannels,
   EXPLORE_DETAIL, EXPLORE_INSTALL, EXPLORE_LIST,
   SYSTEM_INFO,
+  UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY,
 } from '@/shared/channel-types';
 import type {
   AppCreateRequest,
@@ -49,6 +50,10 @@ export type ElectronInvokePayloadMap = {
   [RUNTIME_CHECK]: undefined;
   [RUNTIME_INSTALL]: string;
   [RUNTIME_INSTALL_ABORT]: string;
+  [RUNTIME_INSTALL_STATUS]: undefined;
+
+  [UTIL_OPEN_PATH]: string;
+  [UTIL_SELECT_DIRECTORY]: string | undefined;
 };
 
 export type ElectronInvokeResponseMap = {
@@ -80,6 +85,10 @@ export type ElectronInvokeResponseMap = {
   [RUNTIME_CHECK]: IpcResponse<{ runtimes: { type: string; installed: boolean; version?: string }[] }>;
   [RUNTIME_INSTALL]: IpcResponse<undefined>;
   [RUNTIME_INSTALL_ABORT]: IpcResponse<undefined>;
+  [RUNTIME_INSTALL_STATUS]: IpcResponse<{ statuses: RuntimeInstallStatusEvent[] }>;
+
+  [UTIL_OPEN_PATH]: IpcResponse<undefined>;
+  [UTIL_SELECT_DIRECTORY]: IpcResponse<{ path: string }>;
 };
 
 export interface ElectronAPI {

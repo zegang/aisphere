@@ -10,6 +10,7 @@ import { IpcResponse } from '../../src/shared/channel-types';
 import { join } from 'path';
 import { SandboxService } from '../services/SandboxService';
 import { AppService } from '../services/AppService';
+import type { RuntimeService } from '../services/RuntimeService';
 
 /**
  * Package utility to handle application installation lifecycle: download, unpack, and runtime setup.
@@ -48,7 +49,7 @@ export class Package {
     app.install = {
       installed: false,
       installed_at: new Date().toISOString(),
-      installed_package: downloadResults[0].filePath || '' // Reference the primary/first package
+      installed_package: downloadResults[0]?.filePath || ''
     };
 
     return { success: true, data: app };
@@ -151,7 +152,18 @@ export class Package {
       }
       if (event) event.sender.send(`app:install:log:${app.id}`, `Download successful: ${app.install.installed_package}`);
 
-      // 2. Run install script if one exists
+      // 2. Provision the container runtime for image-based apps (pull image).
+      if (app.runtime?.runtime === 'docker') {
+        if (event) event.sender.send(`app:install:log:${app.id}`, `Provisioning the Docker image...`);
+        const runtimeService = ServiceContainer.getInstance().get<RuntimeService>(ServiceName.RuntimeService);
+        const runtimeResult = await runtimeService.install(app, event);
+        if (!runtimeResult.success) {
+          if (event) event.sender.send(`app:install:log:${app.id}`, `Docker image setup failed: ${runtimeResult.error}`);
+          return runtimeResult;
+        }
+      }
+
+      // 3. Run install script if one exists
       if (event) event.sender.send(`app:install:log:${app.id}`, `Looking for 'afterdownload' scripts...`);
       const afterDownloadResult = await this.runInstallScript(app, event);
       if (event) {

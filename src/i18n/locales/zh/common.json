@@ -45,6 +45,7 @@
       "all_categories": "所有分类",
       "all_types": "所有类型",
       "all_platforms": "所有平台",
+      "all_runtimes": "所有运行环境",
       "clear": "清除筛选"
     },
     "label": {
@@ -60,6 +61,13 @@
       "installed_by": "安装者",
       "installed_path": "安装路径",
       "url": "链接"
+    },
+    "runtimes": {
+      "apptainer": "Apptainer",
+      "docker": "Docker",
+      "podman": "Podman",
+      "conda": "Conda",
+      "native": "原生"
     }
   },
   "settings": {
@@ -77,7 +85,10 @@
     "ready_models": "已准备就绪的 AI 模型",
     "chats": "聊天会话",
     "conversations": "聊天对话记录",
-    "root_directory": "AiSphere 根目录"
+    "root_directory": "AiSphere 根目录",
+    "browse": "浏览…",
+    "open_directory": "打开目录",
+    "select_root_directory": "选择 AiSphere 根目录"
   },
   "sidebar": {
     "home": "主页",

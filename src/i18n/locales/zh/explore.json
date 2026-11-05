@@ -10,6 +10,7 @@
       "all_categories": "所有分类",
       "all_types": "所有类型",
       "all_platforms": "所有平台",
+      "all_runtimes": "所有运行环境",
       "clear": "清除筛选"
     },
     "label": {
@@ -37,6 +38,7 @@
       "apptainer": "Apptainer",
       "docker": "Docker",
       "podman": "Podman",
+      "conda": "Conda",
       "native": "Native"
     },
     "platforms": {

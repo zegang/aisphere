@@ -95,5 +95,33 @@ export const MOCK_APPLICATIONS: Application[] = [
       gpu: 'NVIDIA RTX 3090/4090'
     },
     packages: ['file://../aisphere2/resources/sifs/sglang.tar.gz']
+  },
+  {
+    id: 'app-005',
+    name: 'llama.cpp Chat',
+    org: 'ggml-org',
+    url: 'https://github.com/ggml-org/llama.cpp',
+    version: 'latest',
+    description: 'Chat with a compact Qwen2.5 0.5B model in your browser. Runs llama.cpp in Docker with its built-in web UI.',
+    category: 'LLMs Inference Engine',
+    type: 'llm',
+    runtime: {
+      runtime: 'docker',
+      image: 'ghcr.io/ggml-org/llama.cpp:server',
+      options: ['-p', '8090:8080'],
+      // {model} is replaced by the runtime with the installed GGUF model.
+      args: ['-m', '{model}', '--host', '0.0.0.0', '--port', '8080', '-c', '4096', '--jinja']
+    },
+    labels: ['local', 'LLM', 'chat', 'webui', 'docker'],
+    requirements: {
+      platform: 'any',
+      cpu: 'x64',
+      memory: '4GB RAM',
+      storage: '1GB',
+      gpu: 'Not required (CPU inference)'
+    },
+    packages: [
+      'https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q4_k_m.gguf'
+    ]
   }
 ]

@@ -1,8 +1,9 @@
-import { app, ipcMain } from 'electron';
-import path, { join } from 'path';
+import { ipcMain } from 'electron';
+import { join } from 'path';
 import { appendFileSync, existsSync, mkdirSync } from 'fs';
 import { LOG_SEND } from '../../src/shared/channel-types';
 import { Service, ServiceName } from '../types/IService';
+import { getDataPath } from '../utils/app-paths';
 
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
@@ -18,7 +19,7 @@ export class LogService implements Service {
   private logFilePath: string;
 
   constructor() {
-    const logDir = path.join(app.getAppPath(), 'log');
+    const logDir = getDataPath('log');
     if (!existsSync(logDir)) {
       mkdirSync(logDir, { recursive: true });
     }

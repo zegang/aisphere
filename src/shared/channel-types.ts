@@ -24,12 +24,42 @@ export const SYSTEM_INFO = 'system:info' as const;
 export const RUNTIME_CHECK = 'runtime:check' as const;
 export const RUNTIME_INSTALL = 'runtime:install' as const;
 export const RUNTIME_INSTALL_ABORT = 'runtime:install:abort' as const;
+export const RUNTIME_INSTALL_INPUT = 'runtime:install:input' as const;
+export const RUNTIME_INSTALL_RESIZE = 'runtime:install:resize' as const;
+/** Returns the last known installation status for every runtime type. */
+export const RUNTIME_INSTALL_STATUS = 'runtime:install:status' as const;
+
+export type RuntimeKind = 'docker' | 'podman' | 'apptainer' | 'conda';
+export type RuntimeInstallState = 'starting' | 'downloading' | 'installing' | 'completed' | 'failed' | 'aborted';
+
+/** Payload pushed on `runtimeInstallStatusChannel(type)` while an install runs. */
+export interface RuntimeInstallStatusEvent {
+  type: RuntimeKind;
+  state: RuntimeInstallState;
+  /** Human readable detail, e.g. the installer currently running. */
+  message?: string;
+  /** Download progress, only present while `state` is `downloading`. */
+  percent?: number;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  /** Timestamp used to discard out-of-order updates. */
+  at: number;
+}
+
+export function runtimeInstallStatusChannel(type: string): string {
+  return `runtime:install:status:${type}`;
+}
+
+export function runtimeInstallOutputChannel(type: string): string {
+  return `runtime:install:output:${type}`;
+}
 
 // Log channels
 export const LOG_SEND = 'log:send' as const;
 
 // Utils
 export const UTIL_OPEN_PATH = 'util:openPath' as const;
+export const UTIL_SELECT_DIRECTORY = 'util:selectDirectory' as const;
 
 // Explore
 export const EXPLORE_LIST = 'explore:list' as const;
@@ -55,11 +85,12 @@ export type SettingChannel =
   | typeof SETTING_UPDATE | typeof SETTING_DELETE;
 
 export type SystemChannel =
-  | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_INSTALL_ABORT;
+  | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_INSTALL_ABORT
+  | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE | typeof RUNTIME_INSTALL_STATUS;
 
 export type LogChannel = typeof LOG_SEND;
 
-export type UtilChannel = typeof UTIL_OPEN_PATH;
+export type UtilChannel = typeof UTIL_OPEN_PATH | typeof UTIL_SELECT_DIRECTORY;
 
 export type ExploreChannel = typeof EXPLORE_LIST | typeof EXPLORE_DETAIL | typeof EXPLORE_INSTALL;
 

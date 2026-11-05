@@ -8,9 +8,8 @@
   "author": "AiSphere Team <zegang.luo@qq.com>",
   "license": "MIT",
   "scripts": {
-    "postinstall": "electron-builder install-app-deps",
-    "dev:clean": "rm -rf node_modules/.vite",
-    "dev": "yarn dev:clean && concurrently \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev:clean": "node -e \"require('fs').rmSync('node_modules/.vite',{recursive:true,force:true})\"",
+    "dev": "yarn dev:clean && vite",
     "build": "tsc && vite build && electron-builder",
     "build:dir": "tsc && vite build && electron-builder --dir",
     "build:win": "tsc && vite build && electron-builder --win",

@@ -48,6 +48,13 @@ export class SandboxService implements Service {
     this.getLogger().info(`Running command:${optionsStr}\n> ${fullCommand}`, 'SandboxService');
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        fn();
+      };
+
       const child = spawn(command, args, {
         cwd: options.cwd,
         shell: true
@@ -55,7 +62,8 @@ export class SandboxService implements Service {
 
       const onAbort = () => {
         child.kill();
-        reject(new Error('Command aborted'));
+        if (options.signal) options.signal.removeEventListener('abort', onAbort);
+        finish(() => reject(new Error('Command aborted')));
       };
 
       if (options.signal) {
@@ -71,7 +79,7 @@ export class SandboxService implements Service {
         if (isPrompt && options.onInteraction) {
           try {
             const response = await options.onInteraction(output.trim());
-            child.stdin.write(response + '\n');
+            child.stdin?.write(response + '\n');
           } catch (e) {
             this.getLogger().error('Interaction failed or cancelled', 'SandboxService');
           }
@@ -81,12 +89,23 @@ export class SandboxService implements Service {
       child.stdout.on('data', handleData);
       child.stderr.on('data', handleData);
 
+      // Without this handler a spawn failure (for example an invalid cwd)
+      // emits 'error' and the promise would never settle.
+      child.on('error', (error) => {
+        if (options.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
+        finish(() => reject(error));
+      });
+
       child.on('close', (code) => {
         if (options.signal) {
           options.signal.removeEventListener('abort', onAbort);
         }
-        if (code === 0) resolve(code);
-        else reject(new Error(`Command failed with code ${code}`));
+        finish(() => {
+          if (code === 0) resolve(code);
+          else reject(new Error(`Command failed with code ${code}`));
+        });
       });
     });
   }

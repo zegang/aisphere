@@ -10,6 +10,8 @@ export interface ChecksumOptions {
 }
 
 export interface DownloadOptions {
+  /** Optional file name to use instead of the one derived from the URL. */
+  filename?: string;
   /** Optional callback for download progress. */
   onProgress?: (progress: { url: string; filePath: string; downloadedBytes: number; totalBytes: number }) => void;
   /** Optional callback for when a single download completes. */
@@ -56,7 +58,29 @@ export class Downloader {
 
     try {
       await fs.mkdir(destinationFolder, { recursive: true });
-      result = await this.handleSingleDownload(url, destinationFolder, options);
+
+      // Downloads from some CDNs are flaky (connection resets mid-transfer).
+      // Retry a few times before surfacing a failure to the user.
+      let lastError: unknown;
+      const attempts = 3;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          result = await this.handleSingleDownload(url, destinationFolder, options);
+          lastError = undefined;
+          break;
+        } catch (error) {
+          lastError = error;
+          if (options?.signal?.aborted) break;
+          if (attempt < attempts) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.warn(`Download attempt ${attempt}/${attempts} failed for ${url}: ${message}. Retrying...`, 'Downloader');
+            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+          }
+        }
+      }
+      if (lastError) {
+        throw lastError;
+      }
 
       if (result.success && result.filePath && options?.checksum) {
         const isValid = await this.verifyChecksum(result.filePath, options.checksum);
@@ -103,7 +127,10 @@ export class Downloader {
 
   private async handleSingleDownload(url: string, destinationFolder: string, options?: DownloadOptions): Promise<DownloadResult> {
     const urlObj = new URL(url);
-    const filename = basename(urlObj.pathname) || `download_${Date.now()}`;
+    const filename =
+      options?.filename ||
+      decodeURIComponent(basename(urlObj.pathname)) ||
+      `download_${Date.now()}`;
     const filePath = join(destinationFolder, filename);
 
     switch (urlObj.protocol) {

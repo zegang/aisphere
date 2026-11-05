@@ -11,6 +11,7 @@ interface ExploreState {
   selectedCategory: string;
   selectedType: string;
   selectedPlatform: string;
+  selectedRuntime: string;
 
   // Actions
   loadApplications: () => Promise<void>;
@@ -18,6 +19,7 @@ interface ExploreState {
   setCategory: (category: string) => void;
   setType: (type: string) => void;
   setPlatform: (platform: string) => void;
+  setRuntime: (runtime: string) => void;
   clearFilters: () => void;
   installApplication: (app: Application) => Promise<void>;
   setSelectedAppId: (id: string | null) => void;
@@ -32,6 +34,7 @@ export const useExploreStore = create<ExploreState>((set) => ({
   selectedCategory: 'All',
   selectedType: 'All',
   selectedPlatform: 'All',
+  selectedRuntime: 'All',
 
   loadApplications: async () => {
     set({ loading: true });
@@ -52,7 +55,8 @@ export const useExploreStore = create<ExploreState>((set) => ({
   setCategory: (selectedCategory) => set({ selectedCategory }),
   setType: (selectedType) => set({ selectedType }),
   setPlatform: (selectedPlatform) => set({ selectedPlatform }),
-  clearFilters: () => set({ search: '', selectedCategory: 'All', selectedType: 'All', selectedPlatform: 'All' }),
+  setRuntime: (selectedRuntime) => set({ selectedRuntime }),
+  clearFilters: () => set({ search: '', selectedCategory: 'All', selectedType: 'All', selectedPlatform: 'All', selectedRuntime: 'All' }),
 
   installApplication: async (app) => {
     set({ installingId: app.id });

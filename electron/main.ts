@@ -1,13 +1,14 @@
 // Electron main process entry point
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, nativeImage, type OpenDialogOptions } from 'electron';
 import path, { join } from 'path';
-import { mkdirSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { registerHandlers } from './ipc/handlers';
 import { ExploreService } from './services/ExploreService';
 import { AppService } from './services/AppService';
 import { SettingService } from './services/SettingService';
 import { LogService } from './services/LogService';
-import { UTIL_OPEN_PATH } from '../src/shared/channel-types';
+import { UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY } from '../src/shared/channel-types';
+import { SettingKey } from '../src/shared/types';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { DbStoreService } from './services/DbStoreService';
@@ -16,6 +17,7 @@ import { ServiceContainer } from './services/ServiceContainer';
 import { ServiceName } from './types/IService';
 import { SystemService } from './services/SystemService';
 import { SandboxService } from './services/SandboxService';
+import { getDataRootDir } from './utils/app-paths';
 
 if (process.platform === 'linux') {
   process.env.DRI_PRIME = '0';
@@ -25,9 +27,61 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+// Distinguishes "user closed the window" (hide to tray) from "app is quitting".
+let isQuitting = false;
 
 // App directory
 const isDev = !app.isPackaged;
+
+function getTrayIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'icons', 'icon.png')
+    : join(__dirname, '..', 'resources', 'icons', 'icon.png');
+}
+
+function showMainWindow(): void {
+  if (!app.isReady()) {
+    return;
+  }
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTray(): void {
+  if (tray) return;
+
+  const iconPath = getTrayIconPath();
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    console.warn(`Tray icon not found at ${iconPath}`);
+  }
+
+  tray = new Tray(icon);
+  tray.setToolTip('AiSphere');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open AiSphere', click: showMainWindow },
+    { type: 'separator' },
+    {
+      label: 'Quit AiSphere',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+
+  // Clicking the tray icon restores the window, like a taskbar entry.
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -53,22 +107,30 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  mainWindow.on('close', (event) => {
+    // Closing the window hides the app to the system tray instead of quitting.
+    // The tray menu (or a second launch) brings the window back.
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
-function initServices(): void {
+function initServices(): Promise<void> {
   ServiceContainer.getInstance().register(ServiceName.LogService, new LogService());
   const logService = ServiceContainer.getInstance().get(ServiceName.LogService) as LogService;
   logService.info('Running on platform ' + process.platform);
   logService.info('Initializing application services...');
   logService.info('AiSphere Root Director: ' + app.getAppPath());
 
-  // Use userData for persistent storage in production, and app path for development visibility
-  const dbRootDir = isDev 
-    ? path.join(app.getAppPath(), 'db')
-    : path.join(app.getPath('userData'), 'db');
+  // Development keeps data beside the sources for visibility; packaged builds
+  // must use userData because the app itself lives in a read-only asar archive.
+  const dbRootDir = path.join(getDataRootDir(), 'db');
 
   // Ensure the database directory and default workspace folder exist
   mkdirSync(path.join(dbRootDir, 'default'), { recursive: true });
@@ -85,44 +147,104 @@ function initServices(): void {
 
   registerHandlers(ipcMain);
 
+  const settingService = ServiceContainer.getInstance().get(ServiceName.SettingService) as SettingService;
+
   // Register utility handlers
   ipcMain.handle(UTIL_OPEN_PATH, async (_event, target: string) => {
     if (!target) return { success: false, error: 'No target provided' };
-    if (target.startsWith('http')) {
-      await shell.openExternal(target);
-    } else {
-      await shell.openPath(target);
+    try {
+      if (target.startsWith('http')) {
+        await shell.openExternal(target);
+        return { success: true };
+      }
+      const openError = await shell.openPath(target);
+      return openError ? { success: false, error: openError } : { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
-    return { success: true };
   });
+
+  ipcMain.handle(UTIL_SELECT_DIRECTORY, async (_event, defaultPath?: string) => {
+    // Windows shows an error dialog for a missing default path, so only pass it
+    // when the directory really exists; otherwise the picker opens at its own
+    // last-used/start location.
+    const usableDefaultPath =
+      typeof defaultPath === 'string' && defaultPath.trim() && existsSync(defaultPath)
+        ? defaultPath
+        : undefined;
+    const options: OpenDialogOptions = {
+      title: 'Select AiSphere Root Directory',
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: usableDefaultPath,
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, error: 'Selection canceled' };
+    }
+    return { success: true, data: { path: result.filePaths[0] } };
+  });
+
+  // Give the root directory setting a valid default so the settings page shows
+  // the real data location instead of an empty or Linux-only placeholder.
+  return settingService.ensureDefault(SettingKey.RootDirectory, getDataRootDir());
 }
 
-async function shutdownServices() : Promise<void> {
-  const logService = ServiceContainer.getInstance().get(ServiceName.LogService) as LogService;
-  logService.info('Shutting down application services...');
-  await ServiceContainer.getInstance().shutdownAllService();
+async function shutdownServices(): Promise<void> {
+  const logService = ServiceContainer.getInstance().get(ServiceName.LogService) as LogService | undefined;
+  logService?.info('Shutting down application services...');
+  try {
+    await ServiceContainer.getInstance().shutdownAllService();
+  } catch (error) {
+    console.error('Failed to shut down application services:', error);
+  }
 }
 
 // App lifecycle
-app.whenReady().then(() => {
-  initServices();
-  createWindow();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    showMainWindow();
+  });
+
+  app.whenReady()
+    .then(async () => {
+      await initServices();
+      createWindow();
+      createTray();
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+      console.error('AiSphere failed to start:', message);
+      dialog.showErrorBox('AiSphere failed to start', message);
+      isQuitting = true;
+      app.quit();
+    });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+    } else {
+      showMainWindow();
     }
   });
-});
+}
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // The window is normally hidden rather than destroyed, so this only runs
+  // during a real quit (or on macOS). On macOS the app stays in the dock.
+  if (process.platform !== 'darwin' && isQuitting) {
     app.quit();
-  } else {
+  } else if (process.platform === 'darwin') {
     shutdownServices();
   }
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   shutdownServices();
 });

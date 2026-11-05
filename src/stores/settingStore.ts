@@ -13,7 +13,7 @@ interface SettingState {
 export const useSettingStore = create<SettingState>((set) => ({
   [SettingKey.Language]: 'en',
   [SettingKey.Theme]: Themes.System,
-  [SettingKey.RootDirectory]: '/opt/aisphere',
+  [SettingKey.RootDirectory]: '',
 
   loadSetting: async () => {
     const result = await window.electron.invoke(SETTING_LIST);
@@ -24,7 +24,7 @@ export const useSettingStore = create<SettingState>((set) => ({
       }, {});
       const language = data.language || 'en';
       const theme = data.theme || Themes.System;
-      const rootdir = data.rootdir || '/opt/aisphere';
+      const rootdir = data.rootdir || '';
       
       i18n.changeLanguage(language);
       applyTheme(theme);

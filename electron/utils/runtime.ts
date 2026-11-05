@@ -7,8 +7,9 @@ import { SandboxService } from '..//services/SandboxService';
 import { App, app } from 'electron';
 import { IpcResponse } from '../../src/shared/channel-types';
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import { AppService } from '../services/AppService';
+import { getDataPath } from './app-paths';
 
 export enum RuntimeClass {
   Apptainer = 'apptainer',
@@ -44,7 +45,7 @@ export abstract class Runtime {
   }
 
   getRuntimeRootDir() {
-    return join(app.getAppPath(), 'runtimes', this.getRuntimeClass(), 'x86_64');
+    return getDataPath('runtimes', this.getRuntimeClass(), 'x86_64');
   }
 
   getLogger() {
@@ -533,6 +534,316 @@ export class RuntimePodman extends Runtime {
     }
 
     return combinedMetadata;
+  }
+}
+
+/**
+ * Implementation for Docker containers.
+ *
+ * Images are pulled during installation, then launched with `docker run -d`.
+ * Applications may reference a GGUF model through the `{model}` argument token:
+ * the directory that contains the installed package is mounted read-only at
+ * `/models` and the token is replaced with the model path inside the container.
+ */
+export class RuntimeDocker extends Runtime {
+  private getRuntimeBinPath() {
+    return this.getRuntimeClass();
+  }
+
+  private getAppService() {
+    return ServiceContainer.getInstance().get(ServiceName.AppService) as AppService;
+  }
+
+  private async ensureAvailable(): Promise<void> {
+    try {
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['--version'], {
+        onLog: () => { /* version is not needed here */ }
+      });
+    } catch {
+      throw new Error('Docker is not installed. Install it from the Runtimes page and try again.');
+    }
+
+    try {
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['info', '--format', '{{.ServerVersion}}'], {
+        onLog: () => { /* server version is not needed */ }
+      });
+    } catch {
+      throw new Error('Docker is installed but its engine is not running. Start Docker Desktop and try again.');
+    }
+  }
+
+  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+    const image = app.runtime?.image;
+    if (!image) {
+      throw new Error(`Application ${app.name} does not define a Docker image.`);
+    }
+
+    const emit = (data: string) => {
+      this.getLogger().info(data, 'RuntimeDocker');
+      if (event) event.sender.send(`app:install:log:${app.id}`, data);
+    };
+
+    await this.ensureAvailable();
+    emit(`Pulling Docker image ${image}...`);
+
+    await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['pull', image], {
+      cwd: app.apphomedir,
+      onLog: (msg) => {
+        emit(msg);
+      }
+    });
+
+    // `docker pull` prints the final digest on success. Keep the image
+    // reference as the installed identifier; the model (if any) stays in
+    // installed_package.
+    app.install = {
+      ...(app.install || { installed_at: new Date().toISOString(), installed_package: image }),
+      installed: true,
+      installed_at: app.install?.installed_at || new Date().toISOString(),
+      installed_package: app.install?.installed_package || image,
+      installed_image: image,
+    } as Application['install'];
+
+    emit(`Docker image ready: ${image}`);
+    return { success: true, data: app };
+  }
+
+  /** Converts a host path into the form Docker Desktop accepts in `-v`. */
+  private toDockerPath(value: string): string {
+    return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
+  }
+
+  /**
+   * Quotes a value for the `shell: true` invocation used by SandboxService,
+   * which joins arguments with spaces. Without this, paths that contain
+   * spaces are split into multiple arguments.
+   */
+  private quoteArg(value: string): string {
+    return /\s/.test(value) ? `"${value}"` : value;
+  }
+
+  /** Resolves `{apphome}` / `{model}` tokens and adds the model bind mount. */
+  private buildRunArgs(task: Task): { options: string[]; args: string[] } {
+    const appHome = task.app.apphomedir || '';
+    const expand = (value: string) => value
+      .replace(/\{apphome\}/g, this.quoteArg(this.toDockerPath(appHome)));
+
+    const options = (task.options || []).map(expand);
+    const args = (task.args || []).map(expand);
+
+    const installedPackage = task.app.install?.installed_package;
+    if (installedPackage && /\.gguf$/i.test(installedPackage)) {
+      const modelDir = this.toDockerPath(dirname(installedPackage));
+      const containerModel = `/models/${basename(installedPackage)}`;
+      options.push('-v', this.quoteArg(`${modelDir}:/models:ro`));
+
+      const hadModelToken = args.some((arg) => arg.includes('{model}'));
+      for (let i = 0; i < args.length; i++) {
+        args[i] = args[i].replace(/\{model\}/g, containerModel);
+      }
+      if (!hadModelToken) {
+        args.push('-m', containerModel);
+      }
+    }
+
+    return { options, args };
+  }
+
+  async run(task: Task): Promise<Task> {
+    const app = task.app;
+    try {
+      this.getLogger().info(`Starting Docker container for Application ${app.name}`, 'RuntimeDocker');
+      await this.ensureAvailable();
+
+      const image = app.install?.installed_image || app.runtime?.image;
+      if (!image) {
+        throw new Error('No Docker image recorded for this application. Reinstall it from Explore.');
+      }
+
+      const { options, args } = this.buildRunArgs(task);
+
+      // A stale container with the same name (e.g. after a crash) would make
+      // `docker run --name` fail, so remove it first.
+      try {
+        await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['rm', '-f', task.id], {
+          cwd: app.apphomedir,
+          onLog: () => { /* expected to fail when the container does not exist */ }
+        });
+      } catch {
+        // No stale container.
+      }
+
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(),
+        ['run', '-d', '--name', task.id, ...options, image, ...args],
+        {
+          cwd: app.apphomedir,
+          onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
+        }
+      );
+
+      task.status = 'running';
+      await this.status(task);
+      return task;
+    } catch (e: any) {
+      task.status = 'failed';
+      throw e;
+    }
+  }
+
+  async restart(task: Task): Promise<Task> {
+    this.getLogger().info(`Restarting Docker container ${task.id}`, 'RuntimeDocker');
+    await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['restart', task.id], {
+      cwd: task.app.apphomedir || process.cwd(),
+      onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
+    });
+    task.status = 'running';
+    await this.status(task);
+    return task;
+  }
+
+  async pause(task: Task): Promise<void> {
+    this.getLogger().info(`Pausing Docker container ${task.id}`, 'RuntimeDocker');
+    await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['pause', task.id], {
+      cwd: task.app.apphomedir || process.cwd(),
+      onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
+    });
+    task.status = 'paused';
+  }
+
+  async stop(task: Task): Promise<void> {
+    this.getLogger().info(`Stopping Docker container ${task.id}`, 'RuntimeDocker');
+    try {
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['stop', task.id], {
+        cwd: task.app.apphomedir || process.cwd(),
+        onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
+      });
+    } catch (e: any) {
+      this.getLogger().debug(`Docker stop failed for ${task.id} (likely already stopped): ${e.message}`, 'RuntimeDocker');
+    }
+
+    this.getLogger().info(`Removing Docker container ${task.id}`, 'RuntimeDocker');
+    await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['rm', '-f', task.id], {
+      cwd: task.app.apphomedir || process.cwd(),
+      onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
+    });
+  }
+
+  shellAttach(task: Task): { command: string; args: string[] } {
+    return {
+      command: this.getRuntimeBinPath(),
+      args: ['exec', '-it', task.id, '/bin/sh']
+    };
+  }
+
+  getShellConfig(task: Task): { command: string; args: string[] } {
+    return this.shellAttach(task);
+  }
+
+  getLogsConfig(task: Task): { command: string; args: string[] } {
+    return {
+      command: this.getRuntimeBinPath(),
+      args: ['logs', '-f', task.id]
+    };
+  }
+
+  async openInteractiveShell(task: Task): Promise<void> {
+    this.getLogger().info(`Opening interactive shell for Docker container ${task.id}`, 'RuntimeDocker');
+    const config = this.shellAttach(task);
+    const shellCommandString = `${config.command} ${config.args.join(' ')}`;
+
+    let shellCommand: string;
+    let shellArgs: string[] = [];
+
+    if (process.platform === 'win32') {
+      shellCommand = 'cmd.exe';
+      shellArgs = ['/c', `start cmd.exe /k "${shellCommandString}"`];
+    } else if (process.platform === 'darwin') {
+      shellCommand = 'open';
+      shellArgs = ['-a', 'Terminal.app', '--args', 'bash', '-c', `${shellCommandString}; exec bash`];
+    } else {
+      shellCommand = 'x-terminal-emulator';
+      shellArgs = ['-e', shellCommandString];
+    }
+
+    try {
+      spawn(shellCommand, shellArgs, {
+        detached: true,
+        stdio: 'ignore',
+        env: process.env,
+      }).unref();
+    } catch (error: any) {
+      this.getLogger().error(`Failed to open interactive shell for ${task.id}: ${error.message}`, 'RuntimeDocker');
+      throw new Error(`Failed to open interactive shell: ${error.message}`);
+    }
+  }
+
+  async status(task: Task): Promise<'running' | 'stopped' | 'paused' | 'unknown'> {
+    let output = '';
+    try {
+      // Use the full inspect output instead of a `--format` template. The
+      // template contains a `|`, which the `shell: true` command runner would
+      // interpret as a pipe instead of passing it to Docker.
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(),
+        ['inspect', task.id], {
+        cwd: task.app.apphomedir || process.cwd(),
+        onLog: (data) => { output += data; }
+      });
+
+      const jsonStart = output.indexOf('[');
+      if (jsonStart === -1) return 'unknown';
+
+      const inspected = JSON.parse(output.substring(jsonStart).trim());
+      const info = Array.isArray(inspected) ? inspected[0] : inspected;
+      const state = String(info?.State?.Status || '').toLowerCase();
+
+      const portData = info?.NetworkSettings?.Ports;
+      if (portData && typeof portData === 'object') {
+        const hostPorts: Record<string, string> = {};
+        for (const [containerPort, mappings] of Object.entries(portData)) {
+          if (Array.isArray(mappings) && mappings.length > 0) {
+            const portNumber = containerPort.split('/')[0];
+            hostPorts[portNumber] = (mappings[0] as any).HostPort;
+          }
+        }
+        task.hostPorts = hostPorts;
+      }
+
+      if (state === 'running') return 'running';
+      if (state === 'paused') return 'paused';
+      if (state === 'exited' || state === 'created' || state === 'dead') return 'stopped';
+      return 'unknown';
+    } catch (e: any) {
+      if (output.toLowerCase().includes('no such object') || output.toLowerCase().includes('no such container')) {
+        return 'unknown';
+      }
+      this.getLogger().info(`Docker status failed for ${task.id}: ${e.message}`, 'RuntimeDocker');
+      return 'unknown';
+    }
+  }
+
+  async inspect(appData: Application): Promise<Record<string, any>> {
+    const image = appData.install?.installed_image || appData.runtime?.image;
+    if (!image) return {};
+
+    this.getLogger().info(`Inspecting Docker image for ${appData.name}`, 'RuntimeDocker');
+    let output = '';
+    try {
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['image', 'inspect', image], {
+        cwd: appData.apphomedir || process.cwd(),
+        onLog: (msg) => { output += msg; }
+      });
+      const jsonStart = output.indexOf('[');
+      if (jsonStart === -1) {
+        const objectStart = output.indexOf('{');
+        if (objectStart === -1) return {};
+        return JSON.parse(output.substring(objectStart).trim());
+      }
+      const data = JSON.parse(output.substring(jsonStart).trim());
+      return Array.isArray(data) ? data[0] : data;
+    } catch (e: any) {
+      this.getLogger().error(`Failed to inspect Docker image ${image}: ${e.message}`, 'RuntimeDocker');
+      return {};
+    }
   }
 }
 

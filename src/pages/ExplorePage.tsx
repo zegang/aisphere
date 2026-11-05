@@ -16,11 +16,13 @@ export default function ExplorePage() {
     selectedCategory,
     selectedType,
     selectedPlatform,
+    selectedRuntime,
     loadApplications,
     setSearch,
     setCategory,
     setType,
     setPlatform,
+    setRuntime,
     clearFilters,
     installApplication,
     setSelectedAppId,
@@ -33,6 +35,7 @@ export default function ExplorePage() {
   const categories = useMemo(() => ['All', ...new Set(applications.map(app => app.category))], [applications]);
   const types = ['All', 'llm', 'tool', 'agent', 'dataset', 'other'];
   const platforms = ['All', 'windows', 'linux', 'mac', 'any'];
+  const runtimes = ['All', 'apptainer', 'docker', 'podman', 'conda', 'native'];
 
   const filteredApplications = useMemo(() => {
     return applications.filter(app => {
@@ -46,12 +49,13 @@ export default function ExplorePage() {
       const matchesPlatform = selectedPlatform === 'All' || 
         app.requirements.platform === selectedPlatform || 
         app.requirements.platform === 'any';
+      const matchesRuntime = selectedRuntime === 'All' || app.runtime?.runtime === selectedRuntime;
 
-      return matchesSearch && matchesCategory && matchesType && matchesPlatform;
+      return matchesSearch && matchesCategory && matchesType && matchesPlatform && matchesRuntime;
     });
-  }, [applications, search, selectedCategory, selectedType, selectedPlatform]);
+  }, [applications, search, selectedCategory, selectedType, selectedPlatform, selectedRuntime]);
 
-  const hasActiveFilters = search !== '' || selectedCategory !== 'All' || selectedType !== 'All' || selectedPlatform !== 'All';
+  const hasActiveFilters = search !== '' || selectedCategory !== 'All' || selectedType !== 'All' || selectedPlatform !== 'All' || selectedRuntime !== 'All';
 
   return (
     <div className="p-6 flex flex-col h-full overflow-hidden">
@@ -95,6 +99,14 @@ export default function ExplorePage() {
           className="px-3 py-2 bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-lg text-sm focus:outline-none focus:border-blue-500"
         >
           {platforms.map(p => <option key={p} value={p}>{p === 'All' ? t('explore.filter.all_platforms') : t(`explore.platforms.${p}`)}</option>)}
+        </select>
+
+        <select
+          value={selectedRuntime}
+          onChange={(e) => setRuntime(e.target.value)}
+          className="px-3 py-2 bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-lg text-sm focus:outline-none focus:border-blue-500"
+        >
+          {runtimes.map(r => <option key={r} value={r}>{r === 'All' ? t('explore.filter.all_runtimes') : t(`explore.runtimes.${r}`)}</option>)}
         </select>
 
         {hasActiveFilters && (

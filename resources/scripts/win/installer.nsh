@@ -1,22 +1,32 @@
 ; Custom NSIS script for AiSphere installer
 
 !include x64.nsh
-!include AccessControl.nsh ; For setting permissions
+!include LogicLib.nsh
+!include nsDialogs.nsh
 
 !macro customHeader
   ; This is called before the installer header is defined
 !macroend
 
-!macro customPage
-  ; Add a custom page to the wizard
-  Page custom DockerCheckPageShow DockerCheckPageLeave
-!macroend
+; Installer pages and their functions must not be compiled when electron-builder
+; generates the uninstaller: makensis treats the unreferenced functions as
+; warnings (6010) and electron-builder compiles with warnings-as-errors.
+!ifndef BUILD_UNINSTALLER
+  !macro customPageAfterChangeDir
+    ; Add a custom page to the wizard
+    Page custom DockerCheckPageShow DockerCheckPageLeave
+  !macroend
+!endif
 
+!ifndef BUILD_UNINSTALLER
 Var DockerInstalled
 Var PodmanInstalled
+Var condaUrl
+Var condaInstaller
+Var podmanUrl
 
 Function DockerCheckPageShow
-  !insertmacro MUI_HEADER_TEXT "Environment Check" "Checking for Docker or Podman dependencies."
+  ; The page title/description come from the surrounding MUI page setup.
 
   ; Try to find docker in the PATH
   nsExec::ExecToStack 'cmd /c "docker --version"'
@@ -54,15 +64,18 @@ FunctionEnd
 Function DockerCheckPageLeave
   ; Logic to execute after the user clicks 'Next' on our custom page
 FunctionEnd
+!endif
 
 !macro customInstall
   DetailPrint "Installing isolated Miniconda toolchain..."
 
-  ; Check if already installed in the selected installation directory
-  IfFileExists "$INSTDIR\miniconda\Scripts\conda.exe" skip_conda
+  ; Runtimes are installed under $INSTDIR\runtimes and their installers are
+  ; cached in $INSTDIR\downloads, matching the in-app runtime installer.
+  CreateDirectory "$INSTDIR\downloads"
+  CreateDirectory "$INSTDIR\runtimes"
 
-  Var /GLOBAL condaUrl
-  Var /GLOBAL condaInstaller
+  ; Check if already installed in the selected installation directory
+  IfFileExists "$INSTDIR\runtimes\conda\Scripts\conda.exe" skip_conda
 
   ; Detect architecture for Windows
   ${If} ${IsNativeARM64}
@@ -74,7 +87,7 @@ FunctionEnd
     Goto skip_conda
   ${EndIf}
 
-  StrCpy $condaInstaller "$INSTDIR\miniconda_installer.exe"
+  StrCpy $condaInstaller "$INSTDIR\downloads\Miniconda3-latest-Windows-installer.exe"
 
   DetailPrint "Downloading Miniconda from $condaUrl..."
   ; inetc is the standard download plugin provided by electron-builder's NSIS environment
@@ -82,21 +95,19 @@ FunctionEnd
   Pop $0
 
   ${If} $0 == "OK"
-    DetailPrint "Executing silent installation to $INSTDIR\miniconda (this may take 2-5 minutes)..."
+    DetailPrint "Executing silent installation to $INSTDIR\runtimes\conda (this may take 2-5 minutes)..."
     ; /S: Silent
     ; /InstallationType=JustMe: Avoids requiring Admin for the tool itself
     ; /D: Target folder (must be the last parameter and handled specially by the installer)
-    ExecWait '"$condaInstaller" /S /InstallationType=JustMe /RegisterPython=0 /AddToPath=0 /D=$INSTDIR\miniconda'
+    ExecWait '"$condaInstaller" /S /InstallationType=JustMe /RegisterPython=0 /AddToPath=0 /D=$INSTDIR\runtimes\conda'
     Delete "$condaInstaller"
     DetailPrint "Conda installation successful."
 
-    ; Set permissions for the 'envs' and 'pkgs' directories to allow non-admin users to create environments.
-    ; This is crucial if installing to a system-protected directory like Program Files.
-    CreateDirectory "$INSTDIR\miniconda\envs" ; Ensure directory exists before setting permissions
-    CreateDirectory "$INSTDIR\miniconda\pkgs" ; Ensure directory exists before setting permissions
-    ${AccessControl::GrantOnFile} "$INSTDIR\miniconda\envs" "(S-1-5-32-545)" "Full" ; Grant 'Users' group Full Control
-    ${AccessControl::GrantOnFile} "$INSTDIR\miniconda\pkgs" "(S-1-5-32-545)" "Full" ; Grant 'Users' group Full Control
-    DetailPrint "Set permissions for Conda environment directories."
+    ; Ensure the per-user environment directories exist. They are created under
+    ; the install directory, which is writable by the installing user.
+    CreateDirectory "$INSTDIR\runtimes\conda\envs"
+    CreateDirectory "$INSTDIR\runtimes\conda\pkgs"
+    DetailPrint "Created Conda environment directories."
   ${Else}
     DetailPrint "Miniconda download failed: $0"
   ${EndIf}
@@ -104,24 +115,25 @@ FunctionEnd
 skip_conda:
 
   DetailPrint "Installing isolated Podman client..."
-  IfFileExists "$INSTDIR\podman\podman.exe" skip_podman
+  IfFileExists "$INSTDIR\runtimes\podman\.installed" skip_podman
 
-  Var /GLOBAL podmanUrl
   ${If} ${RunningX64}
     StrCpy $podmanUrl "https://github.com/containers/podman/releases/latest/download/podman-remote-release-windows-x86_64.zip"
   ${Else}
     Goto skip_podman
   ${EndIf}
 
-  CreateDirectory "$INSTDIR\podman"
-  inetc::get "$podmanUrl" "$INSTDIR\podman.zip" /END
+  CreateDirectory "$INSTDIR\runtimes\podman"
+  inetc::get "$podmanUrl" "$INSTDIR\downloads\podman-remote-release-windows.zip" /END
   Pop $0
   ${If} $0 == "OK"
-    nsisunz::UnzipToLog "$INSTDIR\podman.zip" "$INSTDIR\podman"
-    Delete "$INSTDIR\podman.zip"
-    
+    nsisunz::UnzipToLog "$INSTDIR\downloads\podman-remote-release-windows.zip" "$INSTDIR\runtimes\podman"
+    Delete "$INSTDIR\downloads\podman-remote-release-windows.zip"
+
     ; Create empty config dir for isolation
-    CreateDirectory "$INSTDIR\podman\config"
+    CreateDirectory "$INSTDIR\runtimes\podman\config"
+    FileOpen $9 "$INSTDIR\runtimes\podman\.installed" w
+    FileClose $9
     DetailPrint "Podman client installed."
   ${EndIf}
 
@@ -132,6 +144,8 @@ skip_podman:
   DetailPrint "Cleaning up isolated toolchains and environments..."
   
   ; Recursively remove the directories created by the installer and the application
+  RMDir /r "$INSTDIR\runtimes"
+  RMDir /r "$INSTDIR\downloads"
   RMDir /r "$INSTDIR\miniconda"
   RMDir /r "$INSTDIR\podman"
   RMDir /r "$INSTDIR\bin"

@@ -48,6 +48,8 @@ export interface AppTask {
 
 export interface AppRuntime {
   runtime: 'apptainer' | 'docker' | 'podman' | 'native' | 'conda';
+  /** Container image reference (Docker/Podman), e.g. ghcr.io/org/image:tag. */
+  image?: string;
   install?: string[];
   options?: string[];
   startscript?: string;

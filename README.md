@@ -49,6 +49,55 @@ More are on the way...vLLM & SGLang...
 
 To begin your local AI journey, ensure you have a supported container runtime installed via the **Runtimes** tab, then head over to **Explore** to install your first AI application.
 
+## Build and Run on Windows
+
+The repository ships self-contained scripts for Windows 11. They bootstrap a portable
+Node.js and Yarn into `.tools/` when no suitable system Node.js is available, so the
+only prerequisite is Windows PowerShell 5.1+ (included with Windows 11) and an internet
+connection for the first run.
+
+From the repository root, double-click the `.cmd` files or run them from a terminal:
+
+| Command | What it does |
+| --- | --- |
+| `scripts\windows\setup.cmd` | Downloads Node.js/Yarn if needed, installs dependencies, and prepares the icons. Run this first. |
+| `scripts\windows\dev.cmd` | Starts Vite and launches Electron in development mode (hot reload). |
+| `scripts\windows\build.cmd` | Builds the renderer/main process and packages a Windows installer. |
+
+Build options (PowerShell):
+
+```powershell
+# Build the NSIS installer for x64 (default)
+.\scripts\windows\build.ps1 -Arch x64
+
+# Build an unpacked application folder instead (faster, no installer)
+.\scripts\windows\build.ps1 -Kind dir
+
+# Build for ARM64
+.\scripts\windows\build.ps1 -Arch arm64
+
+# Reinstall dependencies and/or skip the TypeScript check
+.\scripts\windows\setup.ps1 -ForceInstall
+.\scripts\windows\build.ps1 -SkipTypeCheck
+```
+
+Outputs are written to `release/`:
+
+* `release\aisphere-<version>-win-<arch>.exe` – the installer.
+* `release\win-<arch>-unpacked\aisphere.exe` – the unpacked app, runnable without installing.
+
+Notes:
+
+* Dependencies are installed with `--ignore-scripts`; the scripts then run only the
+  installers that are actually needed (Electron download, node-pty, esbuild). This keeps
+  the build working without Visual Studio C++ build tools or Python.
+* Closing the main window hides AiSphere to the system tray instead of quitting. Click the
+  tray icon (or launch the app again) to reopen the window; use **Quit AiSphere** in the
+  tray menu to exit completely.
+* `.tools/` is ignored by git and can be deleted at any time to force a clean bootstrap.
+* Portable-tool versions can be overridden with the `AISPHERE_NODE_VERSION` environment
+  variable (default `v24.22.2`).
+
 ## Authors
 - <zegang.luo@qq.com>
 - You are welcomed to join AiSphere to make everyone enjoy AI
