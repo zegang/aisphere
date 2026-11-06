@@ -1,8 +1,54 @@
 // App store
 
 import { create } from 'zustand'; // Import Terminal icon
-import { APP_LIST, APP_START, APP_STOP, APP_DELETE, APP_STATUS, APP_OPEN_INTERACTIVE_SHELL, APP_UPDATE } from '@/shared/channel-types';
+import {
+  APP_LIST,
+  APP_START,
+  APP_STOP,
+  APP_DELETE,
+  APP_STATUS,
+  APP_OPEN_INTERACTIVE_SHELL,
+  APP_UPDATE,
+  RUNTIME_ENGINE_START,
+  RUNTIME_ENGINE_STATUS,
+  SETTING_GET,
+  SETTING_UPDATE,
+} from '@/shared/channel-types';
 import { Application } from '@/types/api';
+
+/** Dialog shown when an app needs a runtime whose engine is not running. */
+export interface RuntimeStartPrompt {
+  appId: string;
+  appName: string;
+  runtime: string;
+  stage: 'ask' | 'starting' | 'error';
+  error?: string;
+}
+
+const runtimeLabel = (runtime: string) => {
+  const label = runtime.charAt(0).toUpperCase() + runtime.slice(1);
+  return label === 'Apptainer' ? 'Apptainer' : label;
+};
+
+const runtimeAutoStartKey = (runtime: string) => `runtime.autoStart.${runtime}`;
+
+async function readRuntimeAutoStart(runtime: string): Promise<'always' | 'never' | undefined> {
+  try {
+    const result = await window.electron.invoke(SETTING_GET, runtimeAutoStartKey(runtime));
+    const value = result?.data?.value;
+    return value === 'always' || value === 'never' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeRuntimeAutoStart(runtime: string, value: 'always' | 'never'): Promise<void> {
+  try {
+    await window.electron.invoke(SETTING_UPDATE, { key: runtimeAutoStartKey(runtime), value });
+  } catch {
+    // Preference persistence is best-effort; the dialog still works.
+  }
+}
 
 interface AppStore {
   selectedId: string | null;
@@ -13,8 +59,14 @@ interface AppStore {
   // Application Data & Lifecycle
   applications: Application[];
   isLoading: boolean;
+  /** Pending "runtime is not running" dialog, if any. */
+  runtimePrompt: RuntimeStartPrompt | null;
   fetchApplications: () => Promise<void>;
   startApplication: (id: string, args?: string[]) => Promise<void>;
+  launchApplication: (id: string) => Promise<void>;
+  confirmRuntimeStart: (remember: boolean) => Promise<void>;
+  cancelRuntimeStart: (remember: boolean) => Promise<void>;
+  dismissRuntimePrompt: () => void;
   stopApplication: (id: string) => Promise<void>;
   uninstallApplication: (id: string) => Promise<boolean>;
   openApplicationShell: (id: string) => Promise<void>;
@@ -30,6 +82,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   activeTerminalId: null,
   setActiveTerminalId: (id) => set({ activeTerminalId: id }),
   isLoading: false,
+  runtimePrompt: null,
   fetchApplications: async () => {
     set({ isLoading: true });
     try {
@@ -44,6 +97,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   startApplication: async (id) => {
+    const app = get().applications.find((a) => a.id === id);
+    if (!app) return;
+
+    const runtime = app.runtime?.runtime;
+    if (runtime && runtime !== 'native') {
+      try {
+        const result = await window.electron.invoke(RUNTIME_ENGINE_STATUS, runtime);
+        const status = result?.data;
+        if (result?.success && status?.installed && !status?.running) {
+          const preference = await readRuntimeAutoStart(runtime);
+          if (preference === 'never') {
+            const message = `The ${runtimeLabel(runtime)} runtime is not running. Start it manually, or change the auto-start choice in Settings.`;
+            set((state) => ({
+              applications: state.applications.map((a) => (a.id === id ? { ...a, error: message } : a)),
+            }));
+            return;
+          }
+          if (preference === 'always') {
+            set((state) => ({
+              applications: state.applications.map((a) =>
+                a.id === id ? { ...a, error: undefined, task: { ...(a.task || {}), status: 'starting' } as any } : a
+              ),
+            }));
+            const started = await window.electron.invoke(RUNTIME_ENGINE_START, runtime);
+            if (!started.success) {
+              const message = started.error || `Failed to start the ${runtimeLabel(runtime)} runtime.`;
+              set((state) => ({
+                applications: state.applications.map((a) =>
+                  a.id === id ? { ...a, task: { status: 'failed' } as any, error: message } : a
+                ),
+              }));
+              return;
+            }
+            await get().launchApplication(id);
+            return;
+          }
+
+          // Ask the user (once, or every time) whether AiSphere should start
+          // the runtime engine for them.
+          set({
+            runtimePrompt: {
+              appId: id,
+              appName: app.name,
+              runtime,
+              stage: 'ask',
+            },
+          });
+          return;
+        }
+      } catch {
+        // Fall through: APP_START reports a precise error for other failures.
+      }
+    }
+
+    await get().launchApplication(id);
+  },
+
+  launchApplication: async (id) => {
     set((state) => ({
       applications: state.applications.map((a) => (a.id === id ? { ...a, task: { ...(a.task || {}), status: 'starting' } as any, error: undefined } : a)),
     }));
@@ -58,6 +169,45 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }));
     }
   },
+
+  confirmRuntimeStart: async (remember) => {
+    const prompt = get().runtimePrompt;
+    if (!prompt || prompt.stage === 'starting') return;
+
+    if (remember) await writeRuntimeAutoStart(prompt.runtime, 'always');
+
+    set((state) => ({
+      runtimePrompt: { ...prompt, stage: 'starting', error: undefined },
+      applications: state.applications.map((a) =>
+        a.id === prompt.appId ? { ...a, error: undefined, task: { ...(a.task || {}), status: 'starting' } as any } : a
+      ),
+    }));
+
+    const result = await window.electron.invoke(RUNTIME_ENGINE_START, prompt.runtime);
+    if (!result.success) {
+      const message = result.error || `Failed to start the ${runtimeLabel(prompt.runtime)} runtime.`;
+      set((state) => ({
+        runtimePrompt: { ...prompt, stage: 'error', error: message },
+        applications: state.applications.map((a) =>
+          a.id === prompt.appId ? { ...a, task: { status: 'failed' } as any, error: message } : a
+        ),
+      }));
+      return;
+    }
+
+    set({ runtimePrompt: null });
+    await get().launchApplication(prompt.appId);
+  },
+
+  cancelRuntimeStart: async (remember) => {
+    const prompt = get().runtimePrompt;
+    if (!prompt) return;
+    if (remember) await writeRuntimeAutoStart(prompt.runtime, 'never');
+    set({ runtimePrompt: null });
+  },
+
+  dismissRuntimePrompt: () => set({ runtimePrompt: null }),
+
   stopApplication: async (id) => {
     const app = get().applications.find((a) => a.id === id);
     if (!app?.task) return;

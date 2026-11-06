@@ -1,16 +1,52 @@
 // Settings page
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SettingKey, useSettingStore } from '@/stores/settingStore';
 import { useTranslation } from '@/i18n';
 import { Themes } from '@/shared/types';
-import { UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY } from '@/shared/channel-types';
+import { SETTING_GET, SETTING_UPDATE, UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY } from '@/shared/channel-types';
 import { Folder, FolderOpen } from 'lucide-react';
+
+const RUNTIME_OPTIONS = ['docker', 'podman', 'conda', 'apptainer'] as const;
+const runtimeAutoStartKey = (runtime: string) => `runtime.autoStart.${runtime}`;
+
+const runtimeLabel = (runtime: string) => {
+  const label = runtime.charAt(0).toUpperCase() + runtime.slice(1);
+  return label === 'Apptainer' ? 'Apptainer' : label;
+};
 
 export default function SettingsPage() {
   const { language, theme, rootdir, updateSetting } = useSettingStore();
   const { t } = useTranslation();
   const [rootDirError, setRootDirError] = useState<string | null>(null);
+  const [autoStart, setAutoStart] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let disposed = false;
+    const load = async () => {
+      const values = await Promise.all(
+        RUNTIME_OPTIONS.map(async (runtime) => {
+          try {
+            const result = await window.electron.invoke(SETTING_GET, runtimeAutoStartKey(runtime));
+            const value = result?.data?.value;
+            return [runtime, value === 'always' || value === 'never' ? value : ''] as const;
+          } catch {
+            return [runtime, ''] as const;
+          }
+        })
+      );
+      if (!disposed) setAutoStart(Object.fromEntries(values));
+    };
+    load();
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const updateAutoStart = async (runtime: string, value: string) => {
+    setAutoStart((prev) => ({ ...prev, [runtime]: value }));
+    await window.electron.invoke(SETTING_UPDATE, { key: runtimeAutoStartKey(runtime), value });
+  };
 
   const browseRootDirectory = async () => {
     setRootDirError(null);
@@ -91,6 +127,29 @@ export default function SettingsPage() {
           {rootDirError && (
             <p className="mt-1 text-sm text-red-500">{rootDirError}</p>
           )}
+        </div>
+
+        <div className="pt-4 border-t border-light-border dark:border-dark-border">
+          <label className="block text-sm font-medium mb-1">{t('settings.runtime_autostart')}</label>
+          <p className="text-xs text-light-subtle dark:text-dark-subtle mb-3">
+            {t('settings.runtime_autostart_hint')}
+          </p>
+          <div className="space-y-2">
+            {RUNTIME_OPTIONS.map((runtime) => (
+              <div key={runtime} className="flex items-center justify-between gap-3">
+                <span className="text-sm">{runtimeLabel(runtime)}</span>
+                <select
+                  value={autoStart[runtime] || ''}
+                  onChange={(event) => updateAutoStart(runtime, event.target.value)}
+                  className="bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded px-3 py-1.5 text-sm"
+                >
+                  <option value="">{t('settings.runtime_ask')}</option>
+                  <option value="always">{t('settings.runtime_always')}</option>
+                  <option value="never">{t('settings.runtime_never')}</option>
+                </select>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

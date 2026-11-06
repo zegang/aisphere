@@ -36,15 +36,15 @@ export default function HomePage() {
 
   return (
     <div className="p-6">
-      <h2 className="text-2xl font-bold mb-6 ">{t('settings.welcome')}</h2>
+      <h2 className="text-2xl font-bold mb-6 ">{t('home.welcome')}</h2>
   
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div onClick={() => setView('apps')} className="bg-light-surface dark:bg-dark-surface rounded-lg p-6 border border-light-border dark:border-dark-border cursor-pointer hover:border-blue-500/50 transition-all group">
-          <h3 className="text-lg font-semibold mb-2">{t('settings.apps')}</h3>
+          <h3 className="text-lg font-semibold mb-2">{t('home.apps')}</h3>
           <p className="text-3xl font-bold text-blue-600">
             {isLoading ? <RefreshCw className="w-6 h-6 animate-spin" /> : applications.length}
           </p>
-          <p className="text-sm text-light-subtle dark:text-dark-subtle mt-1">{t('settings.active_apps')}</p>
+          <p className="text-sm text-light-subtle dark:text-dark-subtle mt-1">{t('home.apps_hint')}</p>
         </div>
 
         <div 
@@ -52,12 +52,12 @@ export default function HomePage() {
           className="bg-light-surface dark:bg-dark-surface rounded-lg p-6 border border-light-border dark:border-dark-border cursor-pointer hover:border-blue-500/50 transition-all group"
         >
           <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
-            <ShieldCheck className="w-5 h-5 text-blue-600" /> Runtimes
+            <ShieldCheck className="w-5 h-5 text-blue-600" /> {t('home.runtimes')}
           </h3>
           <p className="text-3xl font-bold text-blue-600">
             {runtimesLoading ? <RefreshCw className="w-6 h-6 animate-spin" /> : installedRuntimesCount}
           </p>
-          <p className="text-sm text-light-subtle dark:text-dark-subtle mt-1">Installed container runtimes</p>
+          <p className="text-sm text-light-subtle dark:text-dark-subtle mt-1">{t('home.runtimes_hint')}</p>
         </div>
       </div>
 

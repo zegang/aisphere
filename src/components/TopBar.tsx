@@ -3,8 +3,10 @@
 import { useSettingStore } from '@/stores/settingStore';
 import { SettingKey, Themes } from '@/shared/types';
 import { Sparkles } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 export function TopBar() {
+  const { t } = useTranslation();
   const theme = useSettingStore((s) => s.theme);
   const updateSetting = useSettingStore((s) => s.updateSetting);
 
@@ -15,16 +17,16 @@ export function TopBar() {
       <div className="flex items-center gap-3">
         <h1 className="text-[10px] font-bold text-light-subtle dark:text-dark-subtle tracking-widest uppercase shrink-0">AiSphere Desktop</h1>
         <p className="text-xs font-extrabold bg-gradient-to-r from-blue-600 via-purple-500 to-indigo-600 bg-clip-text text-transparent flex items-center gap-1">
-          <Sparkles className="w-3 h-3 text-blue-500" /> Your Versatile Local AI
+          <Sparkles className="w-3 h-3 text-blue-500" /> {t('topbar.tagline')}
         </p>
       </div>
       <div className="flex items-center gap-2">
         <button
           onClick={toggleDarkMode}
-          aria-label={theme === Themes.Dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={theme === Themes.Dark ? t('topbar.switch_light') : t('topbar.switch_dark')}
           aria-pressed={theme === Themes.Dark}
           className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-light-surface-hover dark:hover:bg-dark-surface-hover transition-colors"
-          title={theme === Themes.Dark ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === Themes.Dark ? t('topbar.switch_light') : t('topbar.switch_dark')}
         >
           {theme === Themes.Dark ? '☀️' : '🌙'}
         </button>

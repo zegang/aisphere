@@ -8,7 +8,7 @@ import { useTranslation } from '@/i18n';
 import { UTIL_OPEN_PATH } from '@/shared/channel-types';
 
 export default function AppsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const {
     applications,
     isLoading,
@@ -50,7 +50,7 @@ export default function AppsPage() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-light-subtle dark:text-dark-subtle">
         <RefreshCw className="w-8 h-8 animate-spin mb-4" />
-        <p>Loading installed apps...</p>
+        <p>{t('apps.loading')}</p>
       </div>
     );
   }
@@ -60,7 +60,7 @@ export default function AppsPage() {
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold flex items-center gap-2">
           <Box className="w-6 h-6 text-blue-600" />
-          My Apps
+          {t('apps.title')}
         </h2>
         <button 
           onClick={() => fetchApplications()}
@@ -74,7 +74,7 @@ export default function AppsPage() {
 
         {applications.length === 0 ? (
           <div className="col-span-full py-20 text-center border-2 border-dashed border-light-border dark:border-dark-border rounded-xl">
-            <p className="text-light-subtle dark:text-dark-subtle">No applications installed yet.</p>
+            <p className="text-light-subtle dark:text-dark-subtle">{t('apps.empty')}</p>
           </div>
         ) : (
           applications.map((app) => {
@@ -107,7 +107,7 @@ export default function AppsPage() {
                       {app.install?.installed_at && (
                         <div className="flex items-center gap-1 mt-1 text-[10px] text-light-subtle dark:text-dark-subtle" title={t('explore.label.installed_at')}>
                           <Calendar className="w-3 h-3 text-blue-500" />
-                          <span>{new Date(app.install.installed_at).toLocaleDateString()}</span>
+                          <span>{new Date(app.install.installed_at).toLocaleDateString(i18n.language)}</span>
                         </div>
                       )}
                     </div>
@@ -126,12 +126,18 @@ export default function AppsPage() {
                         : 'bg-gray-100 text-gray-600 dark:bg-dark-muted dark:text-dark-subtle'
                     }`}
                   >
-                    {status}
+                    {t(`apps.status.${status}`, { defaultValue: status })}
                   </span>
                 </div>
                 <p className="text-sm text-light-subtle dark:text-dark-subtle mb-4 line-clamp-2 flex-1 group-hover:text-light-default dark:group-hover:text-dark-default transition-colors">
-                  {app.description || 'No description provided.'}
+                  {app.description || t('apps.no_description')}
                 </p>
+
+                {app.error && (
+                  <p className="mb-3 text-xs text-red-500 dark:text-red-400 line-clamp-2 break-words" title={app.error}>
+                    {app.error}
+                  </p>
+                )}
 
                 <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-light-border dark:border-dark-border">
                   {running || status === 'starting' ? (
@@ -165,7 +171,7 @@ export default function AppsPage() {
                     }}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
                   >
-                    <Eye className="w-3.5 h-3.5" /> View
+                    <Eye className="w-3.5 h-3.5" /> {t('apps.action.view')}
                   </button>
 
                   {webUrl && (
@@ -175,9 +181,9 @@ export default function AppsPage() {
                         openWebUi(webUrl);
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 transition-colors"
-                      title={`Open ${webUrl}`}
+                      title={t('apps.action.open_url', { url: webUrl })}
                     >
-                      <Globe className="w-3.5 h-3.5" /> Web UI
+                      <Globe className="w-3.5 h-3.5" /> {t('apps.action.web_ui')}
                     </button>
                   )}
                 </div>

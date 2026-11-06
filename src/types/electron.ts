@@ -1,4 +1,4 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RuntimeInstallStatusEvent } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
   SETTING_LIST,
@@ -49,6 +49,10 @@ export type ElectronInvokePayloadMap = {
 
   [RUNTIME_CHECK]: undefined;
   [RUNTIME_INSTALL]: string;
+  [RUNTIME_UNINSTALL]: string;
+  [RUNTIME_DETAIL]: string;
+  [RUNTIME_ENGINE_STATUS]: string;
+  [RUNTIME_ENGINE_START]: string;
   [RUNTIME_INSTALL_ABORT]: string;
   [RUNTIME_INSTALL_STATUS]: undefined;
 
@@ -82,8 +86,12 @@ export type ElectronInvokeResponseMap = {
 
   [SYSTEM_INFO]: IpcResponse<SystemInfoResponse>;
 
-  [RUNTIME_CHECK]: IpcResponse<{ runtimes: { type: string; installed: boolean; version?: string }[] }>;
+  [RUNTIME_CHECK]: IpcResponse<{ runtimes: { type: string; installed: boolean; managed?: boolean; version?: string }[] }>;
   [RUNTIME_INSTALL]: IpcResponse<undefined>;
+  [RUNTIME_UNINSTALL]: IpcResponse<undefined>;
+  [RUNTIME_DETAIL]: IpcResponse<RuntimeDetail>;
+  [RUNTIME_ENGINE_STATUS]: IpcResponse<RuntimeEngineStatus>;
+  [RUNTIME_ENGINE_START]: IpcResponse<RuntimeEngineStatus>;
   [RUNTIME_INSTALL_ABORT]: IpcResponse<undefined>;
   [RUNTIME_INSTALL_STATUS]: IpcResponse<{ statuses: RuntimeInstallStatusEvent[] }>;
 

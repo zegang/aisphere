@@ -1,5 +1,18 @@
 import { useEffect, useRef } from 'react';
-import { Box, CheckCircle, XCircle, Download, RefreshCw, Terminal as TerminalIcon, ShieldCheck, StopCircle, X } from 'lucide-react';
+import {
+  Box,
+  CheckCircle,
+  XCircle,
+  Download,
+  RefreshCw,
+  ChevronRight,
+  Terminal as TerminalIcon,
+  ShieldCheck,
+  StopCircle,
+  X,
+  Trash2,
+} from 'lucide-react';
+import type { TFunction } from 'i18next';
 import { RUNTIME_INSTALL_INPUT, RUNTIME_INSTALL_RESIZE, type RuntimeInstallStatusEvent, type RuntimeKind } from '@/shared/channel-types';
 import {
   RUNTIME_KINDS,
@@ -8,6 +21,8 @@ import {
   type RuntimeCheckStatus,
   type RuntimeLogBuffer,
 } from '@/stores/runtimeStore';
+import { useAiSphereStore } from '@/stores/aiSphereStore';
+import { useTranslation } from '@/i18n';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
@@ -16,28 +31,29 @@ interface InstallTerminalProps {
   type: RuntimeKind;
   install?: RuntimeInstallStatusEvent;
   log?: RuntimeLogBuffer;
+  canAbort: boolean;
   onAbort: () => void;
   onClose: () => void;
 }
 
-function describeInstall(install?: RuntimeInstallStatusEvent): string {
+function describeInstall(t: TFunction, install?: RuntimeInstallStatusEvent): string {
   switch (install?.state) {
     case 'starting':
-      return 'Preparing...';
+      return install.message || t('runtimes.install_state.preparing');
     case 'downloading':
       return typeof install.percent === 'number'
-        ? `Downloading ${install.percent}%`
-        : 'Downloading...';
+        ? t('runtimes.install_state.downloading_percent', { percent: install.percent })
+        : t('runtimes.install_state.downloading');
     case 'installing':
-      return 'Installing...';
+      return install.message || t('runtimes.install_state.installing');
     case 'completed':
-      return 'Completed';
+      return t('runtimes.install_state.completed');
     case 'failed':
-      return 'Failed';
+      return t('runtimes.install_state.failed');
     case 'aborted':
-      return 'Aborted';
+      return t('runtimes.install_state.aborted');
     default:
-      return 'Session ended';
+      return t('runtimes.install_state.ended');
   }
 }
 
@@ -46,7 +62,8 @@ function formatBytes(bytes?: number): string | undefined {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function InstallTerminal({ type, install, log, onAbort, onClose }: InstallTerminalProps) {
+function InstallTerminal({ type, install, log, canAbort, onAbort, onClose }: InstallTerminalProps) {
+  const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XTerm | null>(null);
@@ -159,7 +176,7 @@ function InstallTerminal({ type, install, log, onAbort, onClose }: InstallTermin
     term.scrollToBottom();
   }, [log]);
 
-  const statusText = describeInstall(install);
+  const statusText = describeInstall(t, install);
   const total = formatBytes(install?.totalBytes);
   const downloaded = formatBytes(install?.downloadedBytes);
 
@@ -182,18 +199,18 @@ function InstallTerminal({ type, install, log, onAbort, onClose }: InstallTermin
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {active && (
+          {active && canAbort && (
             <button
               onClick={onAbort}
               className="flex items-center gap-1.5 px-3 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-md text-xs font-bold transition-colors"
             >
-              <StopCircle className="w-3.5 h-3.5" /> Abort
+              <StopCircle className="w-3.5 h-3.5" /> {t('runtimes.terminal.abort')}
             </button>
           )}
           <button
             onClick={onClose}
             className="p-1 hover:bg-white/10 rounded transition-colors text-gray-400 hover:text-white"
-            title="Close"
+            title={t('runtimes.terminal.close')}
           >
             <X className="w-5 h-5" />
           </button>
@@ -218,48 +235,70 @@ function RuntimeCard({
   runtime,
   install,
   busy,
-  showProgress,
+  uninstalling,
   onInstall,
+  onUninstall,
+  onOpenDetail,
   onShowProgress,
 }: {
   runtime: RuntimeCheckStatus;
   install?: RuntimeInstallStatusEvent;
   busy: boolean;
-  showProgress: boolean;
+  uninstalling: boolean;
   onInstall: () => void;
+  onUninstall: () => void;
+  onOpenDetail: () => void;
   onShowProgress: () => void;
 }) {
+  const { t } = useTranslation();
   const active = isRuntimeInstallActive(install);
-  const statusText = describeInstall(install);
+  const statusText = describeInstall(t, install);
   const total = formatBytes(install?.totalBytes);
   const downloaded = formatBytes(install?.downloadedBytes);
+  const label = runtime.type === 'docker'
+    ? 'Docker'
+    : runtime.type === 'podman'
+      ? 'Podman'
+      : runtime.type === 'conda'
+        ? 'Conda'
+        : 'Apptainer';
 
   return (
-    <div className="bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl p-6 shadow-sm flex flex-col">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpenDetail}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpenDetail();
+        }
+      }}
+      className="group bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl p-6 shadow-sm flex flex-col cursor-pointer hover:shadow-md hover:border-blue-500/50 transition-all"
+    >
       <div className="flex items-center justify-between mb-4">
         <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
           <Box className="w-6 h-6 text-blue-600" />
         </div>
-        {runtime.loading ? (
-          <RefreshCw className="w-4 h-4 animate-spin text-gray-400" />
-        ) : runtime.installed ? (
-          <div className="flex items-center gap-1 text-green-600 text-xs font-bold uppercase">
-            <CheckCircle className="w-4 h-4" /> Installed
-          </div>
-        ) : (
-          <div className="flex items-center gap-1 text-red-500 text-xs font-bold uppercase">
-            <XCircle className="w-4 h-4" /> Missing
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {runtime.loading ? (
+            <RefreshCw className="w-4 h-4 animate-spin text-gray-400" />
+          ) : runtime.installed ? (
+            <div className="flex items-center gap-1 text-green-600 text-xs font-bold uppercase">
+              <CheckCircle className="w-4 h-4" /> {t('runtimes.status.installed')}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 text-red-500 text-xs font-bold uppercase">
+              <XCircle className="w-4 h-4" /> {t('runtimes.status.missing')}
+            </div>
+          )}
+          <ChevronRight className="w-4 h-4 text-light-subtle dark:text-dark-subtle opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
       </div>
 
       <h3 className="text-lg font-bold capitalize mb-1">{runtime.type}</h3>
       <p className="text-xs text-light-subtle dark:text-dark-subtle mb-4 flex-1">
-        {runtime.type === 'apptainer'
-          ? 'High-performance containers for Linux HPC.'
-          : runtime.type === 'conda'
-          ? 'Package, dependency and environment management for any language.'
-          : `Industry standard ${runtime.type} container runtime.`}
+        {t(`runtimes.description.${runtime.type}`)}
       </p>
 
       {runtime.version && !active && (
@@ -292,43 +331,62 @@ function RuntimeCard({
         </div>
       )}
 
-      <button
-        disabled={runtime.installed || (!active && busy)}
-        onClick={active ? onShowProgress : onInstall}
-        className={`w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all ${
-          runtime.installed
-            ? 'bg-gray-100 text-gray-400 cursor-default'
-            : active
-            ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50'
-            : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20'
-        }`}
-      >
-        {active ? (
-          <>
-            <RefreshCw className="w-4 h-4 animate-spin" />
-            {showProgress ? 'Show Terminal' : 'Show Progress'}
-          </>
-        ) : runtime.installed ? (
-          'Ready'
-        ) : (
-          <><Download className="w-4 h-4" /> Install</>
-        )}
-      </button>
+      {active ? (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onShowProgress();
+          }}
+          className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50"
+        >
+          <RefreshCw className="w-4 h-4 animate-spin" />
+          {uninstalling ? t('runtimes.action.uninstalling') : t('runtimes.action.show_progress')}
+        </button>
+      ) : runtime.installed ? (
+        <button
+          onClick={(event) => {
+            event.stopPropagation();
+            onUninstall();
+          }}
+          disabled={!runtime.managed || busy}
+          title={runtime.managed
+            ? t('runtimes.action.uninstall_tooltip', { name: label })
+            : t('runtimes.action.uninstall_unmanaged')}
+          className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          <Trash2 className="w-4 h-4" /> {t('runtimes.action.uninstall')}
+        </button>
+      ) : (
+        <button
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation();
+            onInstall();
+          }}
+          className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+        >
+          <Download className="w-4 h-4" /> {t('runtimes.action.install')}
+        </button>
+      )}
     </div>
   );
 }
 
 export default function RuntimePage() {
+  const { t } = useTranslation();
   const statuses = useRuntimeStore((state) => state.statuses);
   const installs = useRuntimeStore((state) => state.installs);
   const logs = useRuntimeStore((state) => state.logs);
   const logPanelType = useRuntimeStore((state) => state.logPanelType);
+  const uninstalling = useRuntimeStore((state) => state.uninstalling);
   const checkRuntimes = useRuntimeStore((state) => state.checkRuntimes);
   const syncInstallStatus = useRuntimeStore((state) => state.syncInstallStatus);
   const installRuntime = useRuntimeStore((state) => state.installRuntime);
+  const uninstallRuntime = useRuntimeStore((state) => state.uninstallRuntime);
   const abortInstall = useRuntimeStore((state) => state.abortInstall);
   const openLogPanel = useRuntimeStore((state) => state.openLogPanel);
   const closeLogPanel = useRuntimeStore((state) => state.closeLogPanel);
+  const openRuntimeDetail = useAiSphereStore((state) => state.openRuntimeDetail);
 
   useEffect(() => {
     checkRuntimes();
@@ -338,20 +396,31 @@ export default function RuntimePage() {
 
   const activeType = RUNTIME_KINDS.find((type) => isRuntimeInstallActive(installs[type]));
 
+  const handleUninstall = async (type: RuntimeKind) => {
+    const label = type === 'docker' ? 'Docker' : type === 'podman' ? 'Podman' : type === 'conda' ? 'Conda' : 'Apptainer';
+    const confirmed = window.confirm(
+      `${t('runtimes.uninstall.confirm_title', { name: label })}\n\n`
+      + t('runtimes.uninstall.confirm_message', { name: label })
+    );
+    if (!confirmed) return;
+    await uninstallRuntime(type);
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
             <ShieldCheck className="w-7 h-7 text-blue-600" />
-            Runtime Environments
+            {t('runtimes.title')}
           </h2>
           <p className="text-light-subtle dark:text-dark-subtle mt-1">
-            Manage container runtimes required to execute AI applications on this host.
+            {t('runtimes.subtitle')}
           </p>
         </div>
         <button
           onClick={checkRuntimes}
+          title={t('runtimes.refresh')}
           className="p-2 hover:bg-light-muted dark:hover:bg-dark-muted rounded-full transition-colors"
         >
           <RefreshCw className={`w-5 h-5 ${statuses.some((status) => status.loading) ? 'animate-spin' : ''}`} />
@@ -364,9 +433,11 @@ export default function RuntimePage() {
             key={runtime.type}
             runtime={runtime}
             install={installs[runtime.type]}
-            busy={!!activeType}
-            showProgress={logPanelType === runtime.type}
+            busy={!!activeType && activeType !== runtime.type}
+            uninstalling={!!uninstalling[runtime.type]}
             onInstall={() => installRuntime(runtime.type)}
+            onUninstall={() => handleUninstall(runtime.type)}
+            onOpenDetail={() => openRuntimeDetail(runtime.type)}
             onShowProgress={() => openLogPanel(runtime.type)}
           />
         ))}
@@ -378,6 +449,7 @@ export default function RuntimePage() {
           type={logPanelType}
           install={installs[logPanelType]}
           log={logs[logPanelType]}
+          canAbort={!uninstalling[logPanelType]}
           onAbort={() => abortInstall(logPanelType)}
           onClose={closeLogPanel}
         />

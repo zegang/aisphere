@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import { randomUUID } from 'crypto';
 import os from 'os';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { existsSync, readdirSync, promises as fs } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import * as pty from 'node-pty';
@@ -16,17 +16,35 @@ import { getDataPath } from '../utils/app-paths';
 import {
   IpcResponse,
   RUNTIME_CHECK,
+  RUNTIME_DETAIL,
+  RUNTIME_ENGINE_START,
+  RUNTIME_ENGINE_STATUS,
   RUNTIME_INSTALL,
   RUNTIME_INSTALL_ABORT,
   RUNTIME_INSTALL_INPUT,
   RUNTIME_INSTALL_RESIZE,
   RUNTIME_INSTALL_STATUS,
+  RUNTIME_UNINSTALL,
+  RuntimeDetail,
+  RuntimeEngineStatus,
   RuntimeInstallState,
   RuntimeInstallStatusEvent,
   RuntimeKind,
   runtimeInstallOutputChannel,
   runtimeInstallStatusChannel,
 } from '../../src/shared/channel-types';
+
+const SUPPORTED_RUNTIMES: RuntimeKind[] = ['docker', 'podman', 'apptainer', 'conda'];
+
+function runtimeLabel(type: string): string {
+  switch (type) {
+    case 'docker': return 'Docker';
+    case 'podman': return 'Podman';
+    case 'conda': return 'Conda';
+    case 'apptainer': return 'Apptainer';
+    default: return type;
+  }
+}
 
 interface RuntimeInstallSession {
   controller: AbortController;
@@ -84,19 +102,100 @@ export class RuntimeService implements Service {
       // probing, otherwise a runtime installed by a previous session would be
       // reported as missing.
       this.registerRuntimePaths();
-      const runtimes = ['docker', 'podman', 'apptainer', 'conda'];
-      const results = await Promise.all(runtimes.map(async (type) => {
+      const results = await Promise.all(SUPPORTED_RUNTIMES.map(async (type) => {
+        const managed = existsSync(getDataPath('runtimes', type));
         try {
           let version = '';
           await this.getSandbox().runCommand(type, ['--version'], {
             onLog: (data) => { version += data; }
           });
-          return { type, installed: true, version: version.trim() };
+          return { type, installed: true, managed, version: version.trim() };
         } catch {
-          return { type, installed: false };
+          return { type, installed: false, managed };
         }
       }));
       return { success: true, data: { runtimes: results } };
+    });
+
+    ipcMain.handle(RUNTIME_DETAIL, async (_event, type: string) => {
+      if (!SUPPORTED_RUNTIMES.includes(type as RuntimeKind)) {
+        return { success: false, error: `Unknown runtime type: ${type}` };
+      }
+      try {
+        const data = await this.getRuntimeDetail(type as RuntimeKind);
+        return { success: true, data };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+
+    ipcMain.handle(RUNTIME_ENGINE_STATUS, async (_event, type: string) => {
+      if (!SUPPORTED_RUNTIMES.includes(type as RuntimeKind)) {
+        return { success: false, error: `Unknown runtime type: ${type}` };
+      }
+      try {
+        const data = await this.getEngineStatus(type as RuntimeKind);
+        return { success: true, data };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+
+    ipcMain.handle(RUNTIME_ENGINE_START, async (_event, type: string) => {
+      if (!SUPPORTED_RUNTIMES.includes(type as RuntimeKind)) {
+        return { success: false, error: `Unknown runtime type: ${type}` };
+      }
+      try {
+        const data = await this.startEngine(type as RuntimeKind);
+        return { success: true, data };
+      } catch (error: any) {
+        const message = error?.message || String(error);
+        this.getLogger().error(`Failed to start the ${type} engine: ${message}`, this.name);
+        return { success: false, error: message };
+      }
+    });
+
+    ipcMain.handle(RUNTIME_UNINSTALL, async (event, type: string) => {
+      if (!SUPPORTED_RUNTIMES.includes(type as RuntimeKind)) {
+        return { success: false, error: `Unknown runtime type: ${type}` };
+      }
+      if (this.installSessions.has(type)) {
+        return { success: false, error: `An installation for ${type} is currently running.` };
+      }
+
+      const emit = (data: string) => {
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(runtimeInstallOutputChannel(type), data);
+        }
+      };
+      const sendStatus = (state: RuntimeInstallState, extra?: Omit<Partial<RuntimeInstallStatusEvent>, 'type' | 'state' | 'at'>) => {
+        const payload: RuntimeInstallStatusEvent = { type: type as RuntimeKind, state, at: Date.now(), ...extra };
+        this.installStates.set(type, payload);
+        if (!event.sender.isDestroyed()) {
+          event.sender.send(runtimeInstallStatusChannel(type), payload);
+        }
+      };
+
+      try {
+        sendStatus('installing', { message: `Uninstalling ${runtimeLabel(type)}...` });
+        emit(`\x1b[1;34mAiSphere runtime uninstaller\x1b[0m\r\n`);
+        emit(`Runtime : ${type}\r\n`);
+        emit(`Folder  : ${getDataPath('runtimes', type)}\r\n\r\n`);
+
+        await this.uninstallRuntime(type as RuntimeKind, emit);
+
+        this.registerRuntimePaths();
+        this.installStates.delete(type);
+        emit(`\r\n\x1b[1;32m${runtimeLabel(type)} was uninstalled.\x1b[0m\r\n`);
+        sendStatus('completed', { message: `${runtimeLabel(type)} uninstalled` });
+        return { success: true };
+      } catch (error: any) {
+        const message = error?.message || String(error);
+        this.getLogger().error(`Failed to uninstall ${type}: ${message}`, this.name);
+        emit(`\r\n\x1b[1;31mUninstall failed: ${message}\x1b[0m\r\n`);
+        sendStatus('failed', { message });
+        return { success: false, error: message };
+      }
     });
 
     ipcMain.handle(RUNTIME_INSTALL, async (event, type: string) => {
@@ -220,6 +319,373 @@ export class RuntimeService implements Service {
         }
       }
     });
+  }
+
+  /** Runtime folder owned by AiSphere. */
+  private getRuntimeDir(type: RuntimeKind): string {
+    return getDataPath('runtimes', type);
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async runCapture(command: string, args: string[]): Promise<string> {
+    let output = '';
+    await this.getSandbox().runCommand(command, args, {
+      onLog: (data) => { output += data; },
+    });
+    return output;
+  }
+
+  /** Resolves the executable inside the AiSphere runtime folder, falling back to PATH. */
+  private runtimeBins: Map<string, string> = new Map();
+
+  private resolveRuntimeBin(type: RuntimeKind): string {
+    const cached = this.runtimeBins.get(type);
+    if (cached && existsSync(cached)) return cached;
+
+    const fileName = type === 'docker'
+      ? 'docker.exe'
+      : type === 'podman'
+      ? 'podman.exe'
+      : type === 'conda'
+      ? 'conda.exe'
+      : process.platform === 'win32' ? 'apptainer.exe' : 'apptainer';
+    const managed = this.findExecutable(this.getRuntimeDir(type), fileName, 4);
+    if (managed) {
+      this.runtimeBins.set(type, managed);
+      return managed;
+    }
+    return type;
+  }
+
+  /** Checks whether the CLI exists and whether its daemon is answering. */
+  private async getEngineStatus(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+    const managed = existsSync(this.getRuntimeDir(type));
+    const bin = this.resolveRuntimeBin(type);
+
+    let installed = false;
+    let version = '';
+    try {
+      version = (await this.runCapture(bin, ['--version'])).trim();
+      installed = true;
+    } catch {
+      installed = false;
+    }
+
+    if (!installed) {
+      return { type, installed: false, running: false, managed };
+    }
+
+    // Conda and Apptainer are plain CLI tools without a background engine.
+    if (type === 'conda' || type === 'apptainer') {
+      return { type, installed: true, running: true, managed, version };
+    }
+
+    const args = type === 'docker'
+      ? ['info', '--format', '{{.ServerVersion}}']
+      : ['info', '--format', '{{.Version.Version}}'];
+
+    try {
+      const serverVersion = (await this.runCapture(bin, args)).trim();
+      return { type, installed: true, running: true, managed, version: serverVersion || version };
+    } catch (error: any) {
+      return {
+        type,
+        installed: true,
+        running: false,
+        managed,
+        version,
+        error: error?.message || String(error),
+      };
+    }
+  }
+
+  private engineStarts: Map<string, Promise<RuntimeEngineStatus>> = new Map();
+
+  /** Starts the runtime engine (Docker Desktop / Podman machine) and waits for it. */
+  private startEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+    const current = this.engineStarts.get(type);
+    if (current) return current;
+    const startup = this.doStartEngine(type).finally(() => this.engineStarts.delete(type));
+    this.engineStarts.set(type, startup);
+    return startup;
+  }
+
+  private async doStartEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+    const label = runtimeLabel(type);
+    const status = await this.getEngineStatus(type);
+    if (!status.installed) {
+      throw new Error(`${label} is not installed. Install it from the Runtimes page first.`);
+    }
+    if (status.running) return status;
+
+    if (type === 'docker') {
+      const exe = this.findExecutable(this.getRuntimeDir('docker'), 'Docker Desktop.exe', 3);
+      if (!exe) {
+        throw new Error('Docker Desktop was not found in the AiSphere runtime folder. Start it manually and try again.');
+      }
+      this.getLogger().info(`Starting Docker Desktop: ${exe}`, this.name);
+      const child = spawn(exe, [], { detached: true, stdio: 'ignore' });
+      child.on('error', (error) => {
+        this.getLogger().error(`Failed to launch Docker Desktop: ${error.message}`, this.name);
+      });
+      child.unref();
+    } else if (type === 'podman') {
+      try {
+        await this.runCapture(this.resolveRuntimeBin('podman'), ['machine', 'start']);
+      } catch (error: any) {
+        this.getLogger().warn(`Podman machine start failed: ${error?.message || error}`, this.name);
+      }
+    }
+
+    const deadline = Date.now() + 240_000;
+    while (Date.now() < deadline) {
+      await this.delay(2000);
+      const next = await this.getEngineStatus(type);
+      if (next.running) {
+        this.getLogger().info(`${label} engine is ready (${next.version || 'unknown version'}).`, this.name);
+        return next;
+      }
+    }
+
+    throw new Error(`Timed out waiting for ${label} to start. Open ${label} manually and try again.`);
+  }
+
+  private async getRuntimeDetail(type: RuntimeKind): Promise<RuntimeDetail> {
+    const installDir = this.getRuntimeDir(type);
+    const installDirExists = existsSync(installDir);
+    const status = await this.getEngineStatus(type);
+    const bin = this.resolveRuntimeBin(type);
+    const managedExecutable = this.findExecutable(
+      installDir,
+      type === 'docker' ? 'docker.exe' : type === 'podman' ? 'podman.exe' : type === 'conda' ? 'conda.exe' : 'apptainer.exe',
+      4,
+    );
+
+    const lowerRoot = installDir.replace(/[\\/]+$/, '').toLowerCase();
+    const pathEntries = (process.env.PATH || '')
+      .split(delimiter)
+      .filter((entry) => entry && entry.replace(/[\\/]+$/, '').toLowerCase().startsWith(lowerRoot));
+
+    const detail: RuntimeDetail = {
+      type,
+      installed: status.installed,
+      managed: installDirExists,
+      version: status.version,
+      platform: os.platform(),
+      arch: os.arch(),
+      installDir,
+      installDirExists,
+      executable: managedExecutable,
+      pathEntries,
+      engine: {
+        hasEngine: type === 'docker' || type === 'podman',
+        running: status.running,
+        version: status.running ? status.version : undefined,
+      },
+    };
+
+    if (detail.engine?.hasEngine && status.installed && !status.running) {
+      detail.engine.error = `The ${runtimeLabel(type)} engine is not running.`;
+    }
+
+    if (type === 'docker' && status.installed && status.running) {
+      try {
+        const info = await this.runCapture(bin, ['info']);
+        detail.engine!.info = this.parseDockerInfo(info);
+      } catch (error: any) {
+        detail.engine!.error = error?.message || String(error);
+      }
+    }
+
+    return detail;
+  }
+
+  /** Extracts the useful fields from the human-readable `docker info` output. */
+  private parseDockerInfo(text: string): Array<{ label: string; value: string }> {
+    const fields = new Set([
+      'Server Version', 'Storage Driver', 'Docker Root Dir', 'Operating System', 'OSType',
+      'Architecture', 'CPUs', 'Total Memory', 'Containers', 'Running', 'Paused', 'Stopped',
+      'Images', 'Logging Driver', 'Cgroup Driver', 'Cgroup Version', 'Kernel Version',
+      'Default Runtime', 'Live Restore Enabled',
+    ]);
+    const seen = new Set<string>();
+    const info: Array<{ label: string; value: string }> = [];
+
+    for (const rawLine of text.split(/\r?\n/)) {
+      // `docker info` indents most server fields with leading spaces.
+      const match = rawLine.match(/^\s*([A-Za-z][A-Za-z0-9 _./-]*):\s*(.+)$/);
+      if (!match) continue;
+      const label = match[1].trim();
+      const value = match[2].trim();
+      if (!fields.has(label) || seen.has(label)) continue;
+      seen.add(label);
+      info.push({ label, value });
+    }
+    return info;
+  }
+
+  /** Stops every process whose executable lives under `dir` (Docker Desktop helper processes). */
+  private async stopProcessesUnder(dir: string, emit: (data: string) => void): Promise<void> {
+    if (process.platform !== 'win32') return;
+    const script = [
+      `$root = ${this.powerShellQuote(dir)};`,
+      'Get-Process -ErrorAction SilentlyContinue | Where-Object {',
+      '  try { $_.Path -and $_.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase) } catch { $false }',
+      '} | ForEach-Object {',
+      '  try { Stop-Process -Id $_.Id -Force -ErrorAction Stop; Write-Output ("Stopped " + $_.ProcessName) } catch { }',
+      '}',
+    ].join('\n');
+
+    await new Promise<void>((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+        windowsHide: true,
+        timeout: 30_000,
+      }, (error, stdout, stderr) => {
+        if (stdout) emit(stdout.replace(/\r?\n/g, '\r\n'));
+        if (stderr) emit(stderr.replace(/\r?\n/g, '\r\n'));
+        if (error) emit(`Process cleanup warning: ${error.message}\r\n`);
+        resolve();
+      });
+    });
+  }
+
+  /** Removes uninstall registrations that point at the AiSphere runtime folder. */
+  private async removeUninstallRegistrations(dir: string, emit: (data: string) => void): Promise<void> {
+    if (process.platform !== 'win32') return;
+    const script = [
+      `$root = ${this.powerShellQuote(dir)};`,
+      `$paths = @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*');`,
+      '$removed = @();',
+      'Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object {',
+      '  $_.InstallLocation -and $_.InstallLocation.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)',
+      '} | ForEach-Object {',
+      '  $name = $_.PSChildName;',
+      '  $removed += $name;',
+      `  Remove-Item ("HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + $name) -Recurse -Force -ErrorAction SilentlyContinue;`,
+      `  Remove-Item ("HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + $name) -Recurse -Force -ErrorAction SilentlyContinue;`,
+      '};',
+      'if ($removed.Count -gt 0) { Write-Output ("Removed uninstall registration: " + ($removed -join ", ")) }',
+    ].join('\n');
+
+    await new Promise<void>((resolve) => {
+      execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+        windowsHide: true,
+        timeout: 30_000,
+      }, (error, stdout, stderr) => {
+        if (stdout) emit(stdout.replace(/\r?\n/g, '\r\n'));
+        if (stderr) emit(stderr.replace(/\r?\n/g, '\r\n'));
+        if (error) this.getLogger().warn(`Uninstall registration cleanup failed: ${error.message}`, this.name);
+        resolve();
+      });
+    });
+  }
+
+  private async removeDirectory(dir: string, emit: (data: string) => void): Promise<void> {
+    emit(`Removing ${dir}...\r\n`);
+
+    // Electron's asar-aware fs treats paths that end in ".asar" as archive
+    // files and keeps a handle open in the archive cache. A runtime folder can
+    // legitimately contain such a file (Docker Desktop ships
+    // frontend/resources/app.asar), and then our own process would keep the
+    // last file locked and the delete would never finish. Disable asar support
+    // for the duration of the removal so the plain Node.js fs is used.
+    const attempt = async () => {
+      const proc = process as unknown as { noAsar?: boolean };
+      const previous = proc.noAsar;
+      proc.noAsar = true;
+      try {
+        await fs.rm(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+      } finally {
+        proc.noAsar = previous;
+      }
+    };
+
+    for (let attemptIndex = 0; attemptIndex < 3 && existsSync(dir); attemptIndex++) {
+      try {
+        if (attemptIndex > 0) {
+          emit(`Removal attempt ${attemptIndex + 1}...\r\n`);
+          await this.delay(2000);
+        }
+        await attempt();
+      } catch (error: any) {
+        emit(`Removal warning: ${error?.message || error}\r\n`);
+      }
+    }
+
+    if (existsSync(dir)) {
+      emit('Falling back to PowerShell for the remaining files...\r\n');
+      await new Promise<void>((resolve) => {
+        const script = `$ErrorActionPreference='SilentlyContinue'; Remove-Item -LiteralPath ${this.powerShellQuote(dir)} -Recurse -Force`;
+        execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+          windowsHide: true,
+          timeout: 600_000,
+        }, (error, stdout, stderr) => {
+          if (stdout) emit(stdout.replace(/\r?\n/g, '\r\n'));
+          if (stderr) emit(stderr.replace(/\r?\n/g, '\r\n'));
+          if (error) emit(`PowerShell removal warning: ${error.message}\r\n`);
+          resolve();
+        });
+      });
+    }
+
+    if (existsSync(dir)) {
+      throw new Error(`Could not remove ${dir}. Close any program using it and try again.`);
+    }
+  }
+
+  /** Drops PATH entries owned by a runtime folder that was just removed. */
+  private removeRuntimePaths(dir: string): void {
+    const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+    const current = process.env[pathKey] || '';
+    const prefix = dir.replace(/[\\/]+$/, '').toLowerCase();
+    const kept = current.split(delimiter).filter((entry) => {
+      if (!entry) return false;
+      return !entry.replace(/[\\/]+$/, '').toLowerCase().startsWith(prefix);
+    });
+    process.env[pathKey] = kept.join(delimiter);
+  }
+
+  private async uninstallRuntime(type: RuntimeKind, emit: (data: string) => void): Promise<void> {
+    const label = runtimeLabel(type);
+    const runtimeDir = this.getRuntimeDir(type);
+
+    if (!existsSync(runtimeDir)) {
+      throw new Error(`${label} is not installed in the AiSphere folder (${runtimeDir}).`);
+    }
+
+    if (type === 'docker') {
+      emit('Stopping Docker Desktop...\r\n');
+      const dockerBin = this.findExecutable(runtimeDir, 'docker.exe', 4) || 'docker';
+      try {
+        await this.runCapture(dockerBin, ['desktop', 'stop']);
+        emit('Docker Desktop stopped.\r\n');
+      } catch (error: any) {
+        emit(`Docker Desktop stop returned: ${error?.message || error}\r\n`);
+      }
+      await this.stopProcessesUnder(runtimeDir, emit);
+      await this.clearStaleDockerRegistration(runtimeDir, emit);
+      emit('Docker Desktop user data in %LOCALAPPDATA%\\Docker was left in place.\r\n');
+    } else if (type === 'conda') {
+      const uninstaller = this.findExecutable(runtimeDir, 'Uninstall-Miniconda3.exe', 2);
+      if (uninstaller) {
+        emit('Running the Miniconda uninstaller...\r\n');
+        await new Promise<void>((resolve) => {
+          execFile(uninstaller, ['/S'], { windowsHide: true, timeout: 300_000 }, (error) => {
+            if (error) emit(`Miniconda uninstaller warning: ${error.message}\r\n`);
+            resolve();
+          });
+        });
+      }
+    }
+
+    await this.removeUninstallRegistrations(runtimeDir, emit);
+    await this.removeDirectory(runtimeDir, emit);
+    this.removeRuntimePaths(runtimeDir);
+    this.runtimeBins.delete(type);
+    emit(`Removed ${runtimeDir}\r\n`);
   }
 
   private async installRuntime(options: {
@@ -372,7 +838,7 @@ export class RuntimeService implements Service {
       // at a location that no longer exists. Real installs elsewhere are kept.
       if (normalize(location) !== normalize(runtimeDir) && existsSync(location)) continue;
 
-      emit(`Removing stale Docker Desktop registration at ${location}\r\n`);
+      emit(`Removing Docker Desktop registration at ${location}\r\n`);
       await new Promise<void>((resolve) => {
         execFile('reg.exe', ['delete', key, '/f'], { windowsHide: true }, () => resolve());
       });

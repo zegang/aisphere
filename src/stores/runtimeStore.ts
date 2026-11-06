@@ -11,6 +11,7 @@ import {
   RUNTIME_INSTALL,
   RUNTIME_INSTALL_ABORT,
   RUNTIME_INSTALL_STATUS,
+  RUNTIME_UNINSTALL,
   runtimeInstallOutputChannel,
   runtimeInstallStatusChannel,
   type RuntimeInstallState,
@@ -28,6 +29,8 @@ const MAX_LOG_LENGTH = 400_000;
 export interface RuntimeCheckStatus {
   type: RuntimeKind;
   installed: boolean;
+  /** True when the runtime lives inside the AiSphere data folder. */
+  managed?: boolean;
   version?: string;
   loading?: boolean;
 }
@@ -69,10 +72,13 @@ interface RuntimeStore {
   logPanelType: RuntimeKind | null;
   /** True when the user closed the terminal; do not reopen it automatically. */
   logPanelDismissed: boolean;
+  /** Runtimes whose uninstall is currently running. */
+  uninstalling: Partial<Record<RuntimeKind, boolean>>;
 
   checkRuntimes: () => Promise<void>;
   syncInstallStatus: () => Promise<void>;
   installRuntime: (type: RuntimeKind) => Promise<void>;
+  uninstallRuntime: (type: RuntimeKind) => Promise<boolean>;
   abortInstall: (type: RuntimeKind) => Promise<void>;
   openLogPanel: (type: RuntimeKind) => void;
   closeLogPanel: () => void;
@@ -118,6 +124,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
   logs: {},
   logPanelType: null,
   logPanelDismissed: false,
+  uninstalling: {},
 
   checkRuntimes: async () => {
     set((state) => ({
@@ -130,7 +137,13 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
         set({
           statuses: RUNTIME_KINDS.map((type) => {
             const found = runtimes.find((runtime) => runtime.type === type);
-            return { type, installed: !!found?.installed, version: found?.version, loading: false };
+            return {
+              type,
+              installed: !!found?.installed,
+              managed: !!found?.managed,
+              version: found?.version,
+              loading: false,
+            };
           }),
         });
       } else {
@@ -227,6 +240,61 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
         },
       }));
     } finally {
+      await get().checkRuntimes();
+    }
+  },
+
+  uninstallRuntime: async (type: RuntimeKind) => {
+    ensureSubscriptions();
+    if (isRuntimeInstallActive(get().installs[type])) {
+      set({ logPanelType: type, logPanelDismissed: false });
+      return false;
+    }
+
+    const append = (chunk: string) => {
+      set((state) => ({
+        logs: { ...state.logs, [type]: appendToLogBuffer(state.logs[type], chunk) },
+      }));
+    };
+
+    set((state) => ({
+      uninstalling: { ...state.uninstalling, [type]: true },
+      logPanelType: type,
+      logPanelDismissed: false,
+      logs: { ...state.logs, [type]: { text: '', start: 0 } },
+      installs: {
+        ...state.installs,
+        [type]: { type, state: 'installing', message: `Uninstalling ${type}...`, at: Date.now() },
+      },
+    }));
+    append(`\x1b[1;33mUninstalling ${type}...\x1b[0m\r\n`);
+
+    try {
+      const result = await window.electron.invoke(RUNTIME_UNINSTALL, type);
+      if (!result.success) {
+        const message = result.error || 'Uninstall failed';
+        append(`\r\n\x1b[1;31m${message}\x1b[0m\r\n`);
+        set((state) => ({
+          installs: {
+            ...state.installs,
+            [type]: { type, state: 'failed', message, at: Date.now() },
+          },
+        }));
+        return false;
+      }
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      append(`\r\n\x1b[1;31m${message}\x1b[0m\r\n`);
+      set((state) => ({
+        installs: {
+          ...state.installs,
+          [type]: { type, state: 'failed', message, at: Date.now() },
+        },
+      }));
+      return false;
+    } finally {
+      set((state) => ({ uninstalling: { ...state.uninstalling, [type]: false } }));
       await get().checkRuntimes();
     }
   },

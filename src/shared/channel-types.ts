@@ -23,6 +23,10 @@ export const SETTING_DELETE = 'setting:delete' as const;
 export const SYSTEM_INFO = 'system:info' as const;
 export const RUNTIME_CHECK = 'runtime:check' as const;
 export const RUNTIME_INSTALL = 'runtime:install' as const;
+export const RUNTIME_UNINSTALL = 'runtime:uninstall' as const;
+export const RUNTIME_DETAIL = 'runtime:detail' as const;
+export const RUNTIME_ENGINE_STATUS = 'runtime:engine:status' as const;
+export const RUNTIME_ENGINE_START = 'runtime:engine:start' as const;
 export const RUNTIME_INSTALL_ABORT = 'runtime:install:abort' as const;
 export const RUNTIME_INSTALL_INPUT = 'runtime:install:input' as const;
 export const RUNTIME_INSTALL_RESIZE = 'runtime:install:resize' as const;
@@ -31,6 +35,42 @@ export const RUNTIME_INSTALL_STATUS = 'runtime:install:status' as const;
 
 export type RuntimeKind = 'docker' | 'podman' | 'apptainer' | 'conda';
 export type RuntimeInstallState = 'starting' | 'downloading' | 'installing' | 'completed' | 'failed' | 'aborted';
+
+/** Whether the runtime CLI and its background engine (daemon) are available. */
+export interface RuntimeEngineStatus {
+  type: RuntimeKind;
+  /** The runtime CLI was found (either in the AiSphere folder or on PATH). */
+  installed: boolean;
+  /** The engine/daemon is answering. CLI-only runtimes report `true` when installed. */
+  running: boolean;
+  /** The runtime lives inside the AiSphere data folder and can be uninstalled here. */
+  managed: boolean;
+  version?: string;
+  error?: string;
+}
+
+/** Detailed information shown on the runtime details page. */
+export interface RuntimeDetail {
+  type: RuntimeKind;
+  installed: boolean;
+  managed: boolean;
+  version?: string;
+  platform: string;
+  arch: string;
+  installDir: string;
+  installDirExists: boolean;
+  executable?: string;
+  /** PATH entries owned by this runtime installation. */
+  pathEntries: string[];
+  engine?: {
+    /** Runtimes without a background engine (conda/apptainer) set this to false. */
+    hasEngine: boolean;
+    running: boolean;
+    version?: string;
+    info?: Array<{ label: string; value: string }>;
+    error?: string;
+  };
+}
 
 /** Payload pushed on `runtimeInstallStatusChannel(type)` while an install runs. */
 export interface RuntimeInstallStatusEvent {
@@ -85,8 +125,10 @@ export type SettingChannel =
   | typeof SETTING_UPDATE | typeof SETTING_DELETE;
 
 export type SystemChannel =
-  | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_INSTALL_ABORT
-  | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE | typeof RUNTIME_INSTALL_STATUS;
+  | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_UNINSTALL
+  | typeof RUNTIME_DETAIL | typeof RUNTIME_ENGINE_STATUS | typeof RUNTIME_ENGINE_START
+  | typeof RUNTIME_INSTALL_ABORT | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE
+  | typeof RUNTIME_INSTALL_STATUS;
 
 export type LogChannel = typeof LOG_SEND;
 

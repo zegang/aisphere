@@ -10,13 +10,16 @@ import AppsPage from './pages/AppsPage';
 import SettingPage from './pages/SettingPage';
 import ExplorePage from './pages/ExplorePage';
 import './i18n/config';
+import { useTranslation } from './i18n';
 import { useSettingStore } from './stores/settingStore';
 import type { SystemInfoResponse } from '@/types/api';
 import { SYSTEM_INFO } from './shared/channel-types';
 import AppWorkspace from './pages/AppWorkspace';
 import RuntimePage from './pages/RuntimePage';
+import RuntimeDetailPage from './pages/RuntimeDetailPage';
 import ExploreDetailPage from './pages/ExploreDetailPage';
 import NotePage from './pages/NotePage';
+import { RuntimeStartDialog } from './components/RuntimeStartDialog';
 
 const viewComponents: Record<string, React.ReactNode> = {
   note: <NotePage />,
@@ -27,9 +30,11 @@ const viewComponents: Record<string, React.ReactNode> = {
   settings: <SettingPage />,
   appworkspace: <AppWorkspace />,
   runtimes: <RuntimePage />,
+  runtimedetail: <RuntimeDetailPage />,
 };
 
 function AiSphere() {
+  const { t } = useTranslation();
   const view = useAiSphereStore((s) => s.view);
   const loadSetting = useSettingStore((s) => s.loadSetting);
   const [systemInfo, setSystemInfo] = useState<SystemInfoResponse | null>(null);
@@ -63,61 +68,66 @@ function AiSphere() {
               type="button"
               onClick={() => setPanelOpen((prev) => !prev)}
               className="absolute -left-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-light-border dark:border-dark-border bg-light-surface dark:bg-dark-surface shadow-md text-light-subtle hover:text-light-text dark:hover:text-dark-text transition-colors"
-              title={panelOpen ? 'Collapse system panel' : 'Expand system panel'}
+              title={panelOpen ? t('systemInfo.collapse') : t('systemInfo.expand')}
             >
               {panelOpen ? <ChevronsRight className="w-4 h-4" /> : <ChevronsLeft className="w-4 h-4" />}
             </button>
             <div className="h-full flex flex-col">
               <div className="flex items-center gap-2 px-4 py-4 border-b border-light-border dark:border-dark-border">
                 <Info className="w-5 h-5 text-blue-600" />
-                {panelOpen && <h2 className="text-sm font-semibold">System Info</h2>}
+                {panelOpen && <h2 className="text-sm font-semibold">{t('systemInfo.title')}</h2>}
               </div>
               <div className={`overflow-auto p-4 ${panelOpen ? '' : 'hidden'}`}>
                 {systemInfo ? (
                   <div className="space-y-4 text-sm">
                     <div className="grid grid-cols-1 gap-3">
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">Platform:</span>{' '}
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.platform')}</span>{' '}
                         {systemInfo.platform} / {systemInfo.os_type}
                       </div>
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">Release:</span>{' '}
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.release')}</span>{' '}
                         {systemInfo.release}
                       </div>
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">Arch:</span>{' '}
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.arch')}</span>{' '}
                         {systemInfo.arch}
                       </div>
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">CPU ({systemInfo.cpus.length} cores):</span>
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.cpus', { count: systemInfo.cpus.length })}</span>
                         <div className="text-[11px] mt-1 opacity-80">{systemInfo.cpus[0]?.model}</div>
                       </div>
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">GPU(s):</span>
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.gpus')}</span>
                         {systemInfo.gpus.map((gpu, i) => (
                           <div key={i} className="text-[11px] mt-1 opacity-80">• {gpu.model}</div>
                         ))}
                       </div>
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">Storage:</span>
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.storage')}</span>
                         {systemInfo.disks.filter(d => d.size > 0).slice(0, 3).map((disk, i) => (
                           <div key={i} className="text-[11px] mt-1 opacity-80">• {disk.mount}: {((disk.size - disk.free) / 1024 / 1024 / 1024).toFixed(1)}GB / {(disk.size / 1024 / 1024 / 1024).toFixed(1)}GB</div>
                         ))}
                       </div>
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">Memory:</span>{' '}
-                        {systemInfo.memory.total ? `${(systemInfo.memory.total / 1024 / 1024 / 1024).toFixed(1)} GB total, ${(systemInfo.memory.free / 1024 / 1024 / 1024).toFixed(1)} GB free` : 'N/A'}
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.memory')}</span>{' '}
+                        {systemInfo.memory.total
+                          ? t('systemInfo.memory_value', {
+                              total: (systemInfo.memory.total / 1024 / 1024 / 1024).toFixed(1),
+                              free: (systemInfo.memory.free / 1024 / 1024 / 1024).toFixed(1),
+                            })
+                          : t('systemInfo.not_available')}
                       </div>
                     </div>
                     <div className="space-y-3 pt-4 border-t border-light-border dark:border-dark-border">
                       <div>
-                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">AiSphere Folder</span>
+                        <span className="font-semibold text-light-subtle dark:text-dark-subtle">{t('systemInfo.folder')}</span>
                         <div className="mt-1 break-words text-xs text-light-text dark:text-dark-text">{systemInfo.data_path}</div>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="text-sm text-light-subtle dark:text-dark-subtle">Loading system info...</div>
+                  <div className="text-sm text-light-subtle dark:text-dark-subtle">{t('systemInfo.loading')}</div>
                 )}
                 <img src="resources/icons/icon.jpeg" alt="AiSphere" className="mt-8 w-92 h-92 object-contain mx-auto" />
               </div>
@@ -125,6 +135,7 @@ function AiSphere() {
           </aside>
         </div>
       </div>
+      <RuntimeStartDialog />
     </div>
   );
 }
