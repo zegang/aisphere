@@ -20,7 +20,10 @@ interface AiSphereStore {
   setSidebarOpen: (open: boolean) => void;
   selectedRuntime: RuntimeKind | null;
   openRuntimeDetail: (type: RuntimeKind) => void;
-  openWorkspace: (id: string) => void;
+  /** Web URL that the workspace should open as soon as it mounts. */
+  pendingWebUrl: string | null;
+  openWorkspace: (id: string, webUrl?: string) => void;
+  clearPendingWebUrl: () => void;
 }
 
 export const useAiSphereStore = create<AiSphereStore>((set) => ({
@@ -30,8 +33,10 @@ export const useAiSphereStore = create<AiSphereStore>((set) => ({
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   selectedRuntime: null,
   openRuntimeDetail: (type) => set({ selectedRuntime: type, view: 'runtimedetail' }),
-  openWorkspace: (id) => {
+  pendingWebUrl: null,
+  openWorkspace: (id, webUrl) => {
     useAppStore.setState({ selectedId: id });
-    set({ view: 'appworkspace' });
+    set({ view: 'appworkspace', pendingWebUrl: webUrl ?? null });
   },
+  clearPendingWebUrl: () => set({ pendingWebUrl: null }),
 }));

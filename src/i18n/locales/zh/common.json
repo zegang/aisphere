@@ -86,7 +86,10 @@
     },
     "status": {
       "installed": "已安装",
-      "missing": "未安装"
+      "missing": "未安装",
+      "running": "运行中",
+      "stopped": "已停止",
+      "ready": "就绪"
     },
     "description": {
       "docker": "业界标准的 Docker 容器运行环境。",
@@ -96,6 +99,12 @@
     },
     "action": {
       "install": "安装",
+      "start": "启动引擎",
+      "starting": "正在启动…",
+      "start_failed": "启动运行环境引擎失败。",
+      "stop": "停止引擎",
+      "stopping": "正在停止…",
+      "stop_failed": "停止运行环境引擎失败。",
       "uninstall": "卸载",
       "uninstalling": "正在卸载…",
       "show_progress": "查看进度",
@@ -257,6 +266,34 @@
     "runtime_always": "自动启动",
     "runtime_never": "永不自动启动"
   },
+  "home": {
+    "welcome": "欢迎使用 AiSphere",
+    "apps": "我的应用",
+    "apps_hint": "已安装的应用",
+    "runtimes": "运行环境",
+    "runtimes_hint": "已安装的容器运行环境"
+  },
+  "systemInfo": {
+    "title": "系统信息",
+    "collapse": "收起系统信息面板",
+    "expand": "展开系统信息面板",
+    "platform": "平台：",
+    "release": "版本：",
+    "arch": "架构：",
+    "cpus": "CPU（{{count}} 核）：",
+    "gpus": "显卡：",
+    "storage": "存储：",
+    "memory": "内存：",
+    "memory_value": "总计 {{total}} GB，可用 {{free}} GB",
+    "folder": "AiSphere 目录",
+    "loading": "正在加载系统信息...",
+    "not_available": "不可用"
+  },
+  "topbar": {
+    "tagline": "你的全能本地 AI",
+    "switch_light": "切换到浅色模式",
+    "switch_dark": "切换到深色模式"
+  },
   "sidebar": {
     "note": "笔记",
     "workspace": "工作区",
@@ -295,5 +332,20 @@
     "delete": "删除",
     "uninstall": "卸载",
     "uninstall_confirm": "您确定要卸载此应用程序吗"
+  },
+  "runtimePrompt": {
+    "start_title": "启动 {{runtime}}？",
+    "error_title": "无法启动 {{runtime}}",
+    "error_fallback": "{{runtime}} 运行环境启动失败。",
+    "starting": "正在启动 {{runtime}} 并等待其引擎就绪，最多可能需要一分钟…",
+    "text": "{{runtime}} 引擎当前未运行。AiSphere 可以为你启动它，然后打开 {{app}}。最多可能需要一分钟。",
+    "remember": "记住我对 {{runtime}} 的选择",
+    "remember_on": "以后将自动启动。你可以在“设置”中更改此选项。",
+    "remember_off": "如果希望 AiSphere 以后自动启动此运行环境，请勾选此项。",
+    "close": "关闭",
+    "try_again": "重试",
+    "please_wait": "请稍候…",
+    "cancel": "取消",
+    "start_launch": "启动并打开"
   }
 }

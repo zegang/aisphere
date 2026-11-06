@@ -19,6 +19,7 @@ import {
   RUNTIME_DETAIL,
   RUNTIME_ENGINE_START,
   RUNTIME_ENGINE_STATUS,
+  RUNTIME_ENGINE_STOP,
   RUNTIME_INSTALL,
   RUNTIME_INSTALL_ABORT,
   RUNTIME_INSTALL_INPUT,
@@ -151,6 +152,20 @@ export class RuntimeService implements Service {
       } catch (error: any) {
         const message = error?.message || String(error);
         this.getLogger().error(`Failed to start the ${type} engine: ${message}`, this.name);
+        return { success: false, error: message };
+      }
+    });
+
+    ipcMain.handle(RUNTIME_ENGINE_STOP, async (_event, type: string) => {
+      if (!SUPPORTED_RUNTIMES.includes(type as RuntimeKind)) {
+        return { success: false, error: `Unknown runtime type: ${type}` };
+      }
+      try {
+        const data = await this.stopEngine(type as RuntimeKind);
+        return { success: true, data };
+      } catch (error: any) {
+        const message = error?.message || String(error);
+        this.getLogger().error(`Failed to stop the ${type} engine: ${message}`, this.name);
         return { success: false, error: message };
       }
     });
@@ -413,6 +428,42 @@ export class RuntimeService implements Service {
     return startup;
   }
 
+  /**
+   * Docker Desktop opens its Dashboard window on startup unless this setting is
+   * disabled. AiSphere runs the engine in the background, so make sure its GUI
+   * stays out of the user's way.
+   */
+  private async disableDockerDashboardOnStartup(): Promise<void> {
+    if (process.platform !== 'win32') return;
+    const appData = process.env.APPDATA;
+    if (!appData) return;
+
+    const settingsPath = join(appData, 'Docker', 'settings-store.json');
+    try {
+      let settings: Record<string, unknown> = {};
+      if (existsSync(settingsPath)) {
+        const raw = await fs.readFile(settingsPath, 'utf8');
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          this.getLogger().warn(`Unexpected Docker settings format in ${settingsPath}; leaving it unchanged.`, this.name);
+          return;
+        }
+        settings = parsed as Record<string, unknown>;
+      } else {
+        await fs.mkdir(dirname(settingsPath), { recursive: true });
+      }
+
+      if (settings.OpenUIOnStartupDisabled === true) return;
+      settings.OpenUIOnStartupDisabled = true;
+      await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+      this.getLogger().info('Configured Docker Desktop to start without opening its Dashboard.', this.name);
+    } catch (error: any) {
+      // The engine can still be started even when this setting cannot be
+      // written; the user may simply see the Docker Dashboard window.
+      this.getLogger().warn(`Could not update Docker Desktop startup settings: ${error?.message || error}`, this.name);
+    }
+  }
+
   private async doStartEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
     const label = runtimeLabel(type);
     const status = await this.getEngineStatus(type);
@@ -422,16 +473,29 @@ export class RuntimeService implements Service {
     if (status.running) return status;
 
     if (type === 'docker') {
-      const exe = this.findExecutable(this.getRuntimeDir('docker'), 'Docker Desktop.exe', 3);
-      if (!exe) {
-        throw new Error('Docker Desktop was not found in the AiSphere runtime folder. Start it manually and try again.');
+      // Start the engine through Docker's own CLI. Unlike launching Docker
+      // Desktop.exe directly, this can start Docker in the background without
+      // opening the Dashboard window. The startup setting below also keeps the
+      // Dashboard closed when Docker Desktop was not running yet.
+      await this.disableDockerDashboardOnStartup();
+      try {
+        const output = (await this.runCapture(this.resolveRuntimeBin('docker'), ['desktop', 'start', '-d'])).trim();
+        this.getLogger().info(`Docker Desktop start requested${output ? `: ${output}` : ''}`, this.name);
+      } catch (error: any) {
+        this.getLogger().warn(
+          `Could not start Docker Desktop through its CLI (${error?.message || error}); launching the application directly.`,
+          this.name,
+        );
+        const exe = this.findExecutable(this.getRuntimeDir('docker'), 'Docker Desktop.exe', 3);
+        if (!exe) {
+          throw new Error('Docker Desktop was not found in the AiSphere runtime folder. Start it manually and try again.');
+        }
+        const child = spawn(exe, [], { detached: true, stdio: 'ignore' });
+        child.on('error', (spawnError) => {
+          this.getLogger().error(`Failed to launch Docker Desktop: ${spawnError.message}`, this.name);
+        });
+        child.unref();
       }
-      this.getLogger().info(`Starting Docker Desktop: ${exe}`, this.name);
-      const child = spawn(exe, [], { detached: true, stdio: 'ignore' });
-      child.on('error', (error) => {
-        this.getLogger().error(`Failed to launch Docker Desktop: ${error.message}`, this.name);
-      });
-      child.unref();
     } else if (type === 'podman') {
       try {
         await this.runCapture(this.resolveRuntimeBin('podman'), ['machine', 'start']);
@@ -451,6 +515,63 @@ export class RuntimeService implements Service {
     }
 
     throw new Error(`Timed out waiting for ${label} to start. Open ${label} manually and try again.`);
+  }
+
+  private engineStops: Map<string, Promise<RuntimeEngineStatus>> = new Map();
+
+  /** Stops the runtime engine (Docker Desktop / Podman machine) and waits for it. */
+  private stopEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+    const current = this.engineStops.get(type);
+    if (current) return current;
+    const stopping = this.doStopEngine(type).finally(() => this.engineStops.delete(type));
+    this.engineStops.set(type, stopping);
+    return stopping;
+  }
+
+  private async doStopEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+    const label = runtimeLabel(type);
+    const status = await this.getEngineStatus(type);
+    if (!status.installed) {
+      throw new Error(`${label} is not installed.`);
+    }
+    if (type === 'conda' || type === 'apptainer') {
+      throw new Error(`${label} does not have a background engine to stop.`);
+    }
+    if (!status.running) return status;
+
+    if (type === 'docker') {
+      try {
+        const output = (await this.runCapture(this.resolveRuntimeBin('docker'), ['desktop', 'stop'])).trim();
+        this.getLogger().info(`Docker Desktop stop requested${output ? `: ${output}` : ''}`, this.name);
+      } catch (error: any) {
+        // `docker desktop stop` fails when only the engine is left running
+        // (e.g. the Dashboard was already closed); the polling below decides
+        // whether the engine is actually gone.
+        this.getLogger().warn(`Docker Desktop stop returned: ${error?.message || error}`, this.name);
+      }
+    } else if (type === 'podman') {
+      try {
+        await this.runCapture(this.resolveRuntimeBin('podman'), ['machine', 'stop']);
+      } catch (error: any) {
+        this.getLogger().warn(`Podman machine stop failed: ${error?.message || error}`, this.name);
+      }
+    }
+
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline) {
+      await this.delay(1500);
+      const next = await this.getEngineStatus(type);
+      if (!next.running) {
+        if (type === 'docker') {
+          // Make sure no Docker GUI/helper processes are left in the tray.
+          await this.stopProcessesUnder(this.getRuntimeDir('docker'), () => undefined);
+        }
+        this.getLogger().info(`${label} engine stopped.`, this.name);
+        return { ...next, running: false };
+      }
+    }
+
+    throw new Error(`Timed out waiting for ${label} to stop. Stop it manually and try again.`);
   }
 
   private async getRuntimeDetail(type: RuntimeKind): Promise<RuntimeDetail> {

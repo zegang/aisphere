@@ -6,10 +6,14 @@ import {
   FolderOpen,
   Download,
   Info,
+  Play,
+  Square,
   Terminal as TerminalIcon,
 } from 'lucide-react';
 import {
   RUNTIME_DETAIL,
+  RUNTIME_ENGINE_START,
+  RUNTIME_ENGINE_STOP,
   UTIL_OPEN_PATH,
   type RuntimeDetail,
   type RuntimeKind,
@@ -41,7 +45,10 @@ export default function RuntimeDetailPage() {
 
   const [data, setData] = useState<RuntimeDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(
     async (type: RuntimeKind) => {
@@ -67,8 +74,45 @@ export default function RuntimeDetailPage() {
 
   useEffect(() => {
     setData(null);
+    setActionError(null);
     if (selectedRuntime) load(selectedRuntime);
   }, [selectedRuntime, load]);
+
+  const startEngine = async () => {
+    if (!selectedRuntime || starting) return;
+    setStarting(true);
+    setActionError(null);
+    try {
+      const result = await window.electron.invoke(RUNTIME_ENGINE_START, selectedRuntime);
+      if (result.success) {
+        await load(selectedRuntime);
+      } else {
+        setActionError(result.error || t('runtimes.action.start_failed'));
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const stopEngine = async () => {
+    if (!selectedRuntime || stopping) return;
+    setStopping(true);
+    setActionError(null);
+    try {
+      const result = await window.electron.invoke(RUNTIME_ENGINE_STOP, selectedRuntime);
+      if (result.success) {
+        await load(selectedRuntime);
+      } else {
+        setActionError(result.error || t('runtimes.action.stop_failed'));
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStopping(false);
+    }
+  };
 
   const engine = data?.engine;
 
@@ -110,6 +154,34 @@ export default function RuntimeDetailPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              {data?.installed && engine?.hasEngine && !engine.running && (
+                <button
+                  onClick={startEngine}
+                  disabled={starting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {starting ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4" />
+                  )}
+                  {starting ? t('runtimes.action.starting') : t('runtimes.action.start')}
+                </button>
+              )}
+              {data?.installed && engine?.hasEngine && engine.running && (
+                <button
+                  onClick={stopEngine}
+                  disabled={stopping}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {stopping ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Square className="w-4 h-4" />
+                  )}
+                  {stopping ? t('runtimes.action.stopping') : t('runtimes.action.stop')}
+                </button>
+              )}
               <button
                 onClick={() => load(selectedRuntime)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
@@ -138,6 +210,12 @@ export default function RuntimeDetailPage() {
           {error && (
             <div className="rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-red-600 dark:text-red-300 mb-4">
               {error}
+            </div>
+          )}
+
+          {actionError && (
+            <div className="rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-red-600 dark:text-red-300 mb-4">
+              {actionError}
             </div>
           )}
 

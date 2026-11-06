@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, Play, X } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 import { useAppStore } from '@/stores/appStore';
 
 const runtimeLabel = (runtime: string) => {
@@ -13,6 +14,7 @@ const runtimeLabel = (runtime: string) => {
  * choice for future launches.
  */
 export function RuntimeStartDialog() {
+  const { t } = useTranslation();
   const prompt = useAppStore((state) => state.runtimePrompt);
   const confirmStart = useAppStore((state) => state.confirmRuntimeStart);
   const cancelStart = useAppStore((state) => state.cancelRuntimeStart);
@@ -38,7 +40,9 @@ export function RuntimeStartDialog() {
             </div>
             <div className="min-w-0">
               <h3 className="text-base font-bold">
-                {prompt.stage === 'error' ? `Could not start ${label}` : `Start ${label}?`}
+                {prompt.stage === 'error'
+                  ? t('runtimePrompt.error_title', { runtime: label })
+                  : t('runtimePrompt.start_title', { runtime: label })}
               </h3>
               <p className="text-xs text-light-subtle dark:text-dark-subtle truncate">{prompt.appName}</p>
             </div>
@@ -48,7 +52,7 @@ export function RuntimeStartDialog() {
               type="button"
               onClick={dismiss}
               className="p-1 rounded hover:bg-light-muted dark:hover:bg-dark-muted transition-colors shrink-0"
-              title="Close"
+              title={t('runtimePrompt.close')}
             >
               <X className="w-4 h-4" />
             </button>
@@ -57,17 +61,17 @@ export function RuntimeStartDialog() {
 
         <div className="px-5 py-4 text-sm space-y-3">
           {prompt.stage === 'error' ? (
-            <p className="text-red-600 dark:text-red-400 break-words">{prompt.error || `The ${label} runtime could not be started.`}</p>
+            <p className="text-red-600 dark:text-red-400 break-words">
+              {prompt.error || t('runtimePrompt.error_fallback', { runtime: label })}
+            </p>
           ) : prompt.stage === 'starting' ? (
             <p className="flex items-center gap-2 text-light-subtle dark:text-dark-subtle">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-              Starting {label} and waiting for its engine to become ready. This can take up to a minute…
+              {t('runtimePrompt.starting', { runtime: label })}
             </p>
           ) : (
             <p className="text-light-subtle dark:text-dark-subtle">
-              The {label} engine is not running. AiSphere can start it for you, then launch
-              <span className="font-medium text-light-text dark:text-dark-text"> {prompt.appName}</span>.
-              This can take up to a minute.
+              {t('runtimePrompt.text', { runtime: label, app: prompt.appName })}
             </p>
           )}
 
@@ -80,11 +84,11 @@ export function RuntimeStartDialog() {
                 className="mt-0.5 accent-blue-600"
               />
               <span>
-                <span className="block text-sm font-medium">Remember my choice for {label}</span>
+                <span className="block text-sm font-medium">
+                  {t('runtimePrompt.remember', { runtime: label })}
+                </span>
                 <span className="block text-[11px] text-light-subtle dark:text-dark-subtle">
-                  {remember
-                    ? 'Starting will be automatic from now on. You can change this in Settings.'
-                    : 'If AiSphere should start this runtime automatically in the future, check this box.'}
+                  {remember ? t('runtimePrompt.remember_on') : t('runtimePrompt.remember_off')}
                 </span>
               </span>
             </label>
@@ -99,18 +103,18 @@ export function RuntimeStartDialog() {
                 onClick={dismiss}
                 className="px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
               >
-                Close
+                {t('runtimePrompt.close')}
               </button>
               <button
                 type="button"
                 onClick={() => confirmStart(false)}
                 className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
               >
-                Try Again
+                {t('runtimePrompt.try_again')}
               </button>
             </>
           ) : prompt.stage === 'starting' ? (
-            <span className="text-xs text-light-subtle dark:text-dark-subtle">Please wait…</span>
+            <span className="text-xs text-light-subtle dark:text-dark-subtle">{t('runtimePrompt.please_wait')}</span>
           ) : (
             <>
               <button
@@ -118,14 +122,14 @@ export function RuntimeStartDialog() {
                 onClick={() => cancelStart(remember)}
                 className="px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
               >
-                Cancel
+                {t('runtimePrompt.cancel')}
               </button>
               <button
                 type="button"
                 onClick={() => confirmStart(remember)}
                 className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
               >
-                <Play className="w-4 h-4 fill-current" /> Start &amp; Launch
+                <Play className="w-4 h-4 fill-current" /> {t('runtimePrompt.start_launch')}
               </button>
             </>
           )}

@@ -101,7 +101,10 @@
     },
     "status": {
       "installed": "Installed",
-      "missing": "Missing"
+      "missing": "Missing",
+      "running": "Running",
+      "stopped": "Stopped",
+      "ready": "Ready"
     },
     "description": {
       "docker": "Industry standard docker container runtime.",
@@ -111,6 +114,12 @@
     },
     "action": {
       "install": "Install",
+      "start": "Start Engine",
+      "starting": "Starting…",
+      "start_failed": "Failed to start the runtime engine.",
+      "stop": "Stop Engine",
+      "stopping": "Stopping…",
+      "stop_failed": "Failed to stop the runtime engine.",
       "uninstall": "Uninstall",
       "uninstalling": "Uninstalling…",
       "show_progress": "Show Progress",
@@ -272,6 +281,34 @@
     "runtime_always": "Start automatically",
     "runtime_never": "Never start automatically"
   },
+  "home": {
+    "welcome": "Welcome to AiSphere",
+    "apps": "My Apps",
+    "apps_hint": "Installed applications",
+    "runtimes": "Runtimes",
+    "runtimes_hint": "Installed container runtimes"
+  },
+  "systemInfo": {
+    "title": "System Info",
+    "collapse": "Collapse system panel",
+    "expand": "Expand system panel",
+    "platform": "Platform:",
+    "release": "Release:",
+    "arch": "Arch:",
+    "cpus": "CPU ({{count}} cores):",
+    "gpus": "GPU(s):",
+    "storage": "Storage:",
+    "memory": "Memory:",
+    "memory_value": "{{total}} GB total, {{free}} GB free",
+    "folder": "AiSphere Folder",
+    "loading": "Loading system info...",
+    "not_available": "N/A"
+  },
+  "topbar": {
+    "tagline": "Your Versatile Local AI",
+    "switch_light": "Switch to light mode",
+    "switch_dark": "Switch to dark mode"
+  },
   "sidebar": {
     "note": "Note",
     "workspace": "Workspace",
@@ -317,5 +354,20 @@
       "dataset": "Dataset",
       "other": "Other"
     }
+  },
+  "runtimePrompt": {
+    "start_title": "Start {{runtime}}?",
+    "error_title": "Could not start {{runtime}}",
+    "error_fallback": "The {{runtime}} runtime could not be started.",
+    "starting": "Starting {{runtime}} and waiting for its engine to become ready. This can take up to a minute…",
+    "text": "The {{runtime}} engine is not running. AiSphere can start it for you, then launch {{app}}. This can take up to a minute.",
+    "remember": "Remember my choice for {{runtime}}",
+    "remember_on": "Starting will be automatic from now on. You can change this in Settings.",
+    "remember_off": "If AiSphere should start this runtime automatically in the future, check this box.",
+    "close": "Close",
+    "try_again": "Try Again",
+    "please_wait": "Please wait…",
+    "cancel": "Cancel",
+    "start_launch": "Start & Launch"
   }
 }

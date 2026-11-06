@@ -8,12 +8,16 @@
 import { create } from 'zustand';
 import {
   RUNTIME_CHECK,
+  RUNTIME_ENGINE_START,
+  RUNTIME_ENGINE_STATUS,
+  RUNTIME_ENGINE_STOP,
   RUNTIME_INSTALL,
   RUNTIME_INSTALL_ABORT,
   RUNTIME_INSTALL_STATUS,
   RUNTIME_UNINSTALL,
   runtimeInstallOutputChannel,
   runtimeInstallStatusChannel,
+  type RuntimeEngineStatus,
   type RuntimeInstallState,
   type RuntimeInstallStatusEvent,
   type RuntimeKind,
@@ -33,6 +37,12 @@ export interface RuntimeCheckStatus {
   managed?: boolean;
   version?: string;
   loading?: boolean;
+  /** True for runtimes that have a background engine (Docker / Podman). */
+  hasEngine?: boolean;
+  /** Engine/daemon state. Undefined when it has not been checked yet. */
+  running?: boolean;
+  /** Last error from starting this runtime's engine. */
+  engineError?: string;
 }
 
 /**
@@ -61,7 +71,12 @@ export function appendToLogBuffer(buffer: RuntimeLogBuffer | undefined, chunk: s
 }
 
 function createInitialStatuses(): RuntimeCheckStatus[] {
-  return RUNTIME_KINDS.map((type) => ({ type, installed: false, loading: true }));
+  return RUNTIME_KINDS.map((type) => ({
+    type,
+    installed: false,
+    loading: true,
+    hasEngine: type === 'docker' || type === 'podman',
+  }));
 }
 
 interface RuntimeStore {
@@ -74,8 +89,14 @@ interface RuntimeStore {
   logPanelDismissed: boolean;
   /** Runtimes whose uninstall is currently running. */
   uninstalling: Partial<Record<RuntimeKind, boolean>>;
+  /** Runtimes whose engine is currently being started. */
+  starting: Partial<Record<RuntimeKind, boolean>>;
+  /** Runtimes whose engine is currently being stopped. */
+  stopping: Partial<Record<RuntimeKind, boolean>>;
 
   checkRuntimes: () => Promise<void>;
+  startEngine: (type: RuntimeKind) => Promise<boolean>;
+  stopEngine: (type: RuntimeKind) => Promise<boolean>;
   syncInstallStatus: () => Promise<void>;
   installRuntime: (type: RuntimeKind) => Promise<void>;
   uninstallRuntime: (type: RuntimeKind) => Promise<boolean>;
@@ -125,6 +146,8 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
   logPanelType: null,
   logPanelDismissed: false,
   uninstalling: {},
+  starting: {},
+  stopping: {},
 
   checkRuntimes: async () => {
     set((state) => ({
@@ -134,14 +157,37 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
       const result = await window.electron.invoke(RUNTIME_CHECK);
       if (result.success) {
         const runtimes = (result.data?.runtimes ?? []) as RuntimeCheckStatus[];
+
+        // Engine state is not part of the lightweight install check, so probe
+        // Docker/Podman daemons (and CLI-only runtimes) separately. A failure
+        // leaves the state unknown instead of claiming the engine is stopped.
+        const engineStatuses: Partial<Record<RuntimeKind, RuntimeEngineStatus>> = {};
+        await Promise.all(
+          runtimes
+            .filter((runtime) => runtime.installed)
+            .map(async (runtime) => {
+              try {
+                const engine = await window.electron.invoke(RUNTIME_ENGINE_STATUS, runtime.type);
+                if (engine.success && engine.data) {
+                  engineStatuses[runtime.type] = engine.data;
+                }
+              } catch {
+                // Keep the state unknown.
+              }
+            }),
+        );
+
         set({
           statuses: RUNTIME_KINDS.map((type) => {
             const found = runtimes.find((runtime) => runtime.type === type);
+            const engine = engineStatuses[type];
             return {
               type,
               installed: !!found?.installed,
               managed: !!found?.managed,
               version: found?.version,
+              hasEngine: type === 'docker' || type === 'podman',
+              running: found?.installed ? engine?.running : false,
               loading: false,
             };
           }),
@@ -155,6 +201,76 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
       set((state) => ({
         statuses: state.statuses.map((status) => ({ ...status, loading: false })),
       }));
+    }
+  },
+
+  startEngine: async (type) => {
+    if (get().starting[type]) return false;
+    set((state) => ({
+      starting: { ...state.starting, [type]: true },
+      statuses: state.statuses.map((status) =>
+        status.type === type ? { ...status, engineError: undefined } : status,
+      ),
+    }));
+
+    try {
+      const result = await window.electron.invoke(RUNTIME_ENGINE_START, type);
+      if (!result.success) {
+        const message = result.error || 'Failed to start the runtime engine.';
+        set((state) => ({
+          statuses: state.statuses.map((status) =>
+            status.type === type ? { ...status, engineError: message } : status,
+          ),
+        }));
+        return false;
+      }
+      await get().checkRuntimes();
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      set((state) => ({
+        statuses: state.statuses.map((status) =>
+          status.type === type ? { ...status, engineError: message } : status,
+        ),
+      }));
+      return false;
+    } finally {
+      set((state) => ({ starting: { ...state.starting, [type]: false } }));
+    }
+  },
+
+  stopEngine: async (type) => {
+    if (get().stopping[type]) return false;
+    set((state) => ({
+      stopping: { ...state.stopping, [type]: true },
+      statuses: state.statuses.map((status) =>
+        status.type === type ? { ...status, engineError: undefined } : status,
+      ),
+    }));
+
+    try {
+      const result = await window.electron.invoke(RUNTIME_ENGINE_STOP, type);
+      if (!result.success) {
+        const message = result.error || 'Failed to stop the runtime engine.';
+        set((state) => ({
+          statuses: state.statuses.map((status) =>
+            status.type === type ? { ...status, engineError: message } : status,
+          ),
+        }));
+        return false;
+      }
+      await get().checkRuntimes();
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      set((state) => ({
+        statuses: state.statuses.map((status) =>
+          status.type === type ? { ...status, engineError: message } : status,
+        ),
+      }));
+      return false;
+    } finally {
+      set((state) => ({ stopping: { ...state.stopping, [type]: false } }));
     }
   },
 

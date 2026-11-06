@@ -11,6 +11,8 @@ import {
   StopCircle,
   X,
   Trash2,
+  Play,
+  Square,
 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { RUNTIME_INSTALL_INPUT, RUNTIME_INSTALL_RESIZE, type RuntimeInstallStatusEvent, type RuntimeKind } from '@/shared/channel-types';
@@ -236,8 +238,12 @@ function RuntimeCard({
   install,
   busy,
   uninstalling,
+  starting,
+  stopping,
   onInstall,
   onUninstall,
+  onStart,
+  onStop,
   onOpenDetail,
   onShowProgress,
 }: {
@@ -245,8 +251,12 @@ function RuntimeCard({
   install?: RuntimeInstallStatusEvent;
   busy: boolean;
   uninstalling: boolean;
+  starting: boolean;
+  stopping: boolean;
   onInstall: () => void;
   onUninstall: () => void;
+  onStart: () => void;
+  onStop: () => void;
   onOpenDetail: () => void;
   onShowProgress: () => void;
 }) {
@@ -255,6 +265,8 @@ function RuntimeCard({
   const statusText = describeInstall(t, install);
   const total = formatBytes(install?.totalBytes);
   const downloaded = formatBytes(install?.downloadedBytes);
+  const canStart = runtime.installed && runtime.hasEngine && runtime.running === false && !active;
+  const canStop = runtime.installed && runtime.hasEngine && runtime.running === true && !active;
   const label = runtime.type === 'docker'
     ? 'Docker'
     : runtime.type === 'podman'
@@ -297,13 +309,38 @@ function RuntimeCard({
       </div>
 
       <h3 className="text-lg font-bold capitalize mb-1">{runtime.type}</h3>
-      <p className="text-xs text-light-subtle dark:text-dark-subtle mb-4 flex-1">
+      <p className="text-xs text-light-subtle dark:text-dark-subtle mb-3 flex-1">
         {t(`runtimes.description.${runtime.type}`)}
       </p>
 
-      {runtime.version && !active && (
-        <div className="mb-4 p-2 bg-light-bg dark:bg-dark-bg rounded border border-light-border dark:border-dark-border text-[10px] font-mono truncate">
-          {runtime.version}
+      {runtime.installed && !active && (
+        <div className="mb-4 flex items-center justify-between gap-2">
+          {runtime.running !== undefined && (
+            <span
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold ${
+                runtime.running
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-amber-600 dark:text-amber-400'
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  runtime.running ? 'bg-green-500' : 'bg-amber-500'
+                }`}
+              />
+              {runtime.hasEngine
+                ? t(runtime.running ? 'runtimes.status.running' : 'runtimes.status.stopped')
+                : t('runtimes.status.ready')}
+            </span>
+          )}
+          {runtime.version && (
+            <span
+              className="font-mono text-[10px] text-light-subtle dark:text-dark-subtle truncate max-w-[55%]"
+              title={runtime.version}
+            >
+              {runtime.version}
+            </span>
+          )}
         </div>
       )}
 
@@ -331,6 +368,12 @@ function RuntimeCard({
         </div>
       )}
 
+      {runtime.engineError && (
+        <p className="mb-3 text-[11px] text-red-600 dark:text-red-400 break-words">
+          {runtime.engineError}
+        </p>
+      )}
+
       {active ? (
         <button
           onClick={(event) => {
@@ -343,19 +386,55 @@ function RuntimeCard({
           {uninstalling ? t('runtimes.action.uninstalling') : t('runtimes.action.show_progress')}
         </button>
       ) : runtime.installed ? (
-        <button
-          onClick={(event) => {
-            event.stopPropagation();
-            onUninstall();
-          }}
-          disabled={!runtime.managed || busy}
-          title={runtime.managed
-            ? t('runtimes.action.uninstall_tooltip', { name: label })
-            : t('runtimes.action.uninstall_unmanaged')}
-          className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          <Trash2 className="w-4 h-4" /> {t('runtimes.action.uninstall')}
-        </button>
+        <div className="space-y-2">
+          {canStart && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onStart();
+              }}
+              disabled={starting || busy}
+              className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {starting ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
+              )}
+              {starting ? t('runtimes.action.starting') : t('runtimes.action.start')}
+            </button>
+          )}
+          {canStop && (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                onStop();
+              }}
+              disabled={stopping || busy}
+              className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {stopping ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Square className="w-4 h-4" />
+              )}
+              {stopping ? t('runtimes.action.stopping') : t('runtimes.action.stop')}
+            </button>
+          )}
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onUninstall();
+            }}
+            disabled={!runtime.managed || busy}
+            title={runtime.managed
+              ? t('runtimes.action.uninstall_tooltip', { name: label })
+              : t('runtimes.action.uninstall_unmanaged')}
+            className="w-full py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Trash2 className="w-4 h-4" /> {t('runtimes.action.uninstall')}
+          </button>
+        </div>
       ) : (
         <button
           disabled={busy}
@@ -379,7 +458,11 @@ export default function RuntimePage() {
   const logs = useRuntimeStore((state) => state.logs);
   const logPanelType = useRuntimeStore((state) => state.logPanelType);
   const uninstalling = useRuntimeStore((state) => state.uninstalling);
+  const starting = useRuntimeStore((state) => state.starting);
+  const stopping = useRuntimeStore((state) => state.stopping);
   const checkRuntimes = useRuntimeStore((state) => state.checkRuntimes);
+  const startEngine = useRuntimeStore((state) => state.startEngine);
+  const stopEngine = useRuntimeStore((state) => state.stopEngine);
   const syncInstallStatus = useRuntimeStore((state) => state.syncInstallStatus);
   const installRuntime = useRuntimeStore((state) => state.installRuntime);
   const uninstallRuntime = useRuntimeStore((state) => state.uninstallRuntime);
@@ -435,8 +518,12 @@ export default function RuntimePage() {
             install={installs[runtime.type]}
             busy={!!activeType && activeType !== runtime.type}
             uninstalling={!!uninstalling[runtime.type]}
+            starting={!!starting[runtime.type]}
+            stopping={!!stopping[runtime.type]}
             onInstall={() => installRuntime(runtime.type)}
             onUninstall={() => handleUninstall(runtime.type)}
+            onStart={() => startEngine(runtime.type)}
+            onStop={() => stopEngine(runtime.type)}
             onOpenDetail={() => openRuntimeDetail(runtime.type)}
             onShowProgress={() => openLogPanel(runtime.type)}
           />

@@ -27,6 +27,7 @@ export const RUNTIME_UNINSTALL = 'runtime:uninstall' as const;
 export const RUNTIME_DETAIL = 'runtime:detail' as const;
 export const RUNTIME_ENGINE_STATUS = 'runtime:engine:status' as const;
 export const RUNTIME_ENGINE_START = 'runtime:engine:start' as const;
+export const RUNTIME_ENGINE_STOP = 'runtime:engine:stop' as const;
 export const RUNTIME_INSTALL_ABORT = 'runtime:install:abort' as const;
 export const RUNTIME_INSTALL_INPUT = 'runtime:install:input' as const;
 export const RUNTIME_INSTALL_RESIZE = 'runtime:install:resize' as const;
@@ -126,7 +127,7 @@ export type SettingChannel =
 
 export type SystemChannel =
   | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_UNINSTALL
-  | typeof RUNTIME_DETAIL | typeof RUNTIME_ENGINE_STATUS | typeof RUNTIME_ENGINE_START
+  | typeof RUNTIME_DETAIL | typeof RUNTIME_ENGINE_STATUS | typeof RUNTIME_ENGINE_START | typeof RUNTIME_ENGINE_STOP
   | typeof RUNTIME_INSTALL_ABORT | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE
   | typeof RUNTIME_INSTALL_STATUS;
 

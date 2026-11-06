@@ -158,9 +158,11 @@ export default function AppWorkspace() {
     refreshApplicationStatus
   } = useAppStore();
   const setView = useAiSphereStore(s => s.setView);
+  const pendingWebUrl = useAiSphereStore(s => s.pendingWebUrl);
+  const clearPendingWebUrl = useAiSphereStore(s => s.clearPendingWebUrl);
 
   const [activeLogId, setActiveLogId] = useState<string | null>(null);
-  const [activeWebUrl, setActiveWebUrl] = useState<string | null>(null);
+  const [activeWebUrl, setActiveWebUrl] = useState<string | null>(pendingWebUrl);
   const [inspectData, setInspectData] = useState<any>(null);
   const [isEditingRuntime, setIsEditingRuntime] = useState(false);
   const [tempRuntime, setTempRuntime] = useState({
@@ -170,6 +172,12 @@ export default function AppWorkspace() {
   });
   const app = applications.find(a => a.id === selectedId);
   const appStatus = app?.task?.status || 'stopped';
+
+  useEffect(() => {
+    if (!pendingWebUrl) return;
+    setActiveWebUrl(pendingWebUrl);
+    clearPendingWebUrl();
+  }, [pendingWebUrl, clearPendingWebUrl]);
 
   if (!app) {
     return (

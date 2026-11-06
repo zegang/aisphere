@@ -5,7 +5,6 @@ import { useAppStore } from '@/stores/appStore';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { Box, RefreshCw, Calendar, Play, Square, Globe, Eye } from 'lucide-react';
 import { useTranslation } from '@/i18n';
-import { UTIL_OPEN_PATH } from '@/shared/channel-types';
 
 export default function AppsPage() {
   const { t, i18n } = useTranslation();
@@ -41,10 +40,6 @@ export default function AppsPage() {
       clearInterval(timer);
     };
   }, [fetchApplications, refreshApplicationStatus]);
-
-  const openWebUi = (url: string) => {
-    window.electron.invoke(UTIL_OPEN_PATH as any, url);
-  };
 
   if (isLoading && applications.length === 0) {
     return (
@@ -178,7 +173,7 @@ export default function AppsPage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        openWebUi(webUrl);
+                        openWorkspace(app.id, webUrl);
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 transition-colors"
                       title={t('apps.action.open_url', { url: webUrl })}
