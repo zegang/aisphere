@@ -170,7 +170,11 @@ export class Package {
         event.sender.send(`app:install:log:${app.id}`,
           afterDownloadResult.success ? `Installation complete!` : `Installation failed: ${afterDownloadResult.error}`);
       }
-      return afterDownloadResult;
+      // Return the mutated application so the renderer can update the card's
+      // installed state immediately instead of showing "Install" again.
+      return afterDownloadResult.success
+        ? { ...afterDownloadResult, data: app }
+        : afterDownloadResult;
     } catch (error: any) {
       this.getLogger().error(`Package installation failed for ${app.name}: ${error.message}`, 'Package');
       return { success: false, error: error.message };

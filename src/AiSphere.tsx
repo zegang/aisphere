@@ -20,6 +20,7 @@ import RuntimeDetailPage from './pages/RuntimeDetailPage';
 import ExploreDetailPage from './pages/ExploreDetailPage';
 import NotePage from './pages/NotePage';
 import { RuntimeStartDialog } from './components/RuntimeStartDialog';
+import appIcon from '@/assets/app-icon.png';
 
 const viewComponents: Record<string, React.ReactNode> = {
   note: <NotePage />,
@@ -129,7 +130,7 @@ function AiSphere() {
                 ) : (
                   <div className="text-sm text-light-subtle dark:text-dark-subtle">{t('systemInfo.loading')}</div>
                 )}
-                <img src="resources/icons/icon.jpeg" alt="AiSphere" className="mt-8 w-92 h-92 object-contain mx-auto" />
+                <img src={appIcon} alt="AiSphere" className="mt-8 w-48 h-48 object-contain mx-auto" />
               </div>
             </div>
           </aside>

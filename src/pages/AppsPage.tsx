@@ -80,6 +80,23 @@ export default function AppsPage() {
               ? (app.task.hostPorts['8080'] || Object.values(app.task.hostPorts)[0])
               : undefined;
             const webUrl = running && hostPort ? `http://localhost:${hostPort}` : undefined;
+            // Neutral states need an explicit dark text color; inheriting the
+            // light-theme gray would be almost invisible on a dark badge.
+            const statusTone =
+              running || status === 'starting'
+                ? {
+                    badge: 'border-green-200 bg-green-100 text-green-700 dark:border-green-500/30 dark:bg-green-500/15 dark:text-green-300',
+                    dot: 'bg-green-500 dark:bg-green-400',
+                  }
+                : status === 'failed' || status === 'uninstalling'
+                  ? {
+                      badge: 'border-red-200 bg-red-100 text-red-700 dark:border-red-500/30 dark:bg-red-500/15 dark:text-red-300',
+                      dot: 'bg-red-500 dark:bg-red-400',
+                    }
+                  : {
+                      badge: 'border-gray-200 bg-gray-100 text-gray-700 dark:border-dark-muted/40 dark:bg-dark-muted/30 dark:text-dark-text',
+                      dot: 'bg-gray-400 dark:bg-dark-text/80',
+                    };
 
             return (
               <div
@@ -87,42 +104,37 @@ export default function AppsPage() {
                 onClick={() => openWorkspace(app.id)}
                 className="relative bg-light-surface dark:bg-dark-surface rounded-xl p-5 border border-light-border dark:border-dark-border flex flex-col shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-blue-500/50 group"
               >
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    {app.icon ? (
-                      <img src={app.icon} alt="" className="w-10 h-10 rounded-lg object-contain" />
-                    ) : (
-                      <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600">
-                        <Box className="w-6 h-6" />
-                      </div>
-                    )}
-                    <div>
-                      <h3 className="font-semibold leading-tight">{app.name}</h3>
-                      <p className="text-xs text-light-subtle dark:text-dark-subtle">v{app.version}</p>
-                      {app.install?.installed_at && (
-                        <div className="flex items-center gap-1 mt-1 text-[10px] text-light-subtle dark:text-dark-subtle" title={t('explore.label.installed_at')}>
-                          <Calendar className="w-3 h-3 text-blue-500" />
-                          <span>{new Date(app.install.installed_at).toLocaleDateString(i18n.language)}</span>
-                        </div>
-                      )}
+                {/* Top row: icon + status only, so the status text never gets
+                    squeezed by the title. Title and install date live below. */}
+                <div className="flex items-start justify-between mb-3">
+                  {app.icon ? (
+                    <img src={app.icon} alt="" className="w-10 h-10 rounded-lg object-contain" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600">
+                      <Box className="w-6 h-6" />
                     </div>
-                  </div>
+                  )}
                   {app.task?.status === 'uninstalling' && (
                     <div className="absolute top-4 right-4">
                       <RefreshCw className="w-4 h-4 animate-spin text-red-500" />
                     </div>
                   )}
                   <span
-                    className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
-                      running || status === 'starting'
-                        ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                        : status === 'failed' || status === 'uninstalling'
-                        ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                        : 'bg-gray-100 text-gray-600 dark:bg-dark-muted dark:text-dark-subtle'
-                    }`}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${statusTone.badge}`}
                   >
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusTone.dot}`} />
                     {t(`apps.status.${status}`, { defaultValue: status })}
                   </span>
+                </div>
+                <div className="mb-4">
+                  <h3 className="font-semibold leading-tight">{app.name}</h3>
+                  <p className="text-xs text-light-subtle dark:text-dark-subtle">v{app.version}</p>
+                  {app.install?.installed_at && (
+                    <div className="flex items-center gap-1 mt-1 text-[10px] text-light-subtle dark:text-dark-subtle" title={t('explore.label.installed_at')}>
+                      <Calendar className="w-3 h-3 text-blue-500" />
+                      <span>{new Date(app.install.installed_at).toLocaleDateString(i18n.language)}</span>
+                    </div>
+                  )}
                 </div>
                 <p className="text-sm text-light-subtle dark:text-dark-subtle mb-4 line-clamp-2 flex-1 group-hover:text-light-default dark:group-hover:text-dark-default transition-colors">
                   {app.description || t('apps.no_description')}

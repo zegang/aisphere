@@ -24,9 +24,12 @@ extraResources:
   # Tray icon (the window/exe icon is embedded by electron-builder instead).
   - from: resources/icons/icon.png
     to: icons/icon.png
+  # Multi-size icon for the window icon (BrowserWindow 'icon' option).
+  - from: resources/icons/icon.ico
+    to: icons/icon.ico
 
 win:
-  icon: resources/icons/icon.png
+  icon: resources/icons/icon.ico
   target:
     - target: nsis
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}

@@ -347,5 +347,33 @@
     "please_wait": "请稍候…",
     "cancel": "取消",
     "start_launch": "启动并打开"
+  },
+  "notes": {
+    "sources": "来源",
+    "search_sources": "搜索来源...",
+    "studio": "工作室",
+    "new_note": "新笔记",
+    "draft": "草稿",
+    "just_now": "刚刚",
+    "two_hours_ago": "2 小时前",
+    "summary_title": "执行摘要",
+    "summary_body": "根据安全指南，关键结论是本地执行能最大限度降低数据泄露风险...",
+    "architecture_title": "架构概览",
+    "architecture_body": "路线图建议转向去中心化的容器注册表...",
+    "create_note": "创建新的保存回复或笔记",
+    "generate_report": "生成报告",
+    "ask_placeholder": "就你的来源提问...",
+    "disclaimer": "AI 可能会出错，请核实重要信息。",
+    "initial_message": "你好！我已分析你的来源。今天有什么可以帮你？",
+    "mock_response": "作为 {{model}}，我正在根据上传的来源处理你的请求...",
+    "read_aloud": "朗读",
+    "models": {
+      "title": "本地模型",
+      "count": "已检测到 {{count}} 个",
+      "none": "未选择模型",
+      "empty": "未检测到本地 GGUF 模型。请从“探索”页安装模型应用，然后刷新。",
+      "refresh": "刷新模型列表",
+      "app": "来自 {{app}}"
+    }
   }
 }

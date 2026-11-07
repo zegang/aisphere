@@ -369,5 +369,33 @@
     "please_wait": "Please wait…",
     "cancel": "Cancel",
     "start_launch": "Start & Launch"
+  },
+  "notes": {
+    "sources": "Sources",
+    "search_sources": "Search sources...",
+    "studio": "Studio",
+    "new_note": "New Note",
+    "draft": "Draft",
+    "just_now": "Just now",
+    "two_hours_ago": "2 hours ago",
+    "summary_title": "Executive Summary",
+    "summary_body": "Based on the safety guidelines, the key takeaway is that local execution minimizes data leak risks...",
+    "architecture_title": "Architecture Overview",
+    "architecture_body": "The roadmap suggests moving towards a decentralized container registry...",
+    "create_note": "Create new saved response or note",
+    "generate_report": "Generate Report",
+    "ask_placeholder": "Ask anything about your sources...",
+    "disclaimer": "AI can make mistakes. Consider checking important information.",
+    "initial_message": "Hello! I have analyzed your sources. How can I help you today?",
+    "mock_response": "As {{model}}, I'm processing your request based on the uploaded sources...",
+    "read_aloud": "Read aloud",
+    "models": {
+      "title": "Local models",
+      "count": "{{count}} detected",
+      "none": "No model selected",
+      "empty": "No local GGUF models detected. Install a model app from Explore, then refresh.",
+      "refresh": "Refresh model list",
+      "app": "From {{app}}"
+    }
   }
 }

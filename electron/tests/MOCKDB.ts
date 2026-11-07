@@ -123,5 +123,33 @@ export const MOCK_APPLICATIONS: Application[] = [
     packages: [
       'https://modelscope.cn/models/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/master/qwen2.5-0.5b-instruct-q4_k_m.gguf'
     ]
+  },
+  {
+    id: 'app-006',
+    name: 'DeepSeek R1 1.5B Chat',
+    org: 'DeepSeek',
+    url: 'https://github.com/deepseek-ai/DeepSeek-R1',
+    version: 'latest',
+    description: 'Chat with DeepSeek-R1-Distill-Qwen-1.5B locally. Runs llama.cpp in Docker with its built-in web UI; the downloaded GGUF model is detected automatically by the Notes workspace.',
+    category: 'LLMs Inference Engine',
+    type: 'llm',
+    runtime: {
+      runtime: 'docker',
+      image: 'ghcr.io/ggml-org/llama.cpp:server',
+      options: ['-p', '8091:8080'],
+      // {model} is replaced by the runtime with the installed GGUF model.
+      args: ['-m', '{model}', '--host', '0.0.0.0', '--port', '8080', '-c', '8192', '--jinja']
+    },
+    labels: ['local', 'LLM', 'chat', 'webui', 'docker', 'deepseek', 'reasoning'],
+    requirements: {
+      platform: 'any',
+      cpu: 'x64',
+      memory: '4GB RAM',
+      storage: '2GB',
+      gpu: 'Not required (CPU inference)'
+    },
+    packages: [
+      'https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf'
+    ]
   }
 ]

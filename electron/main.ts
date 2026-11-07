@@ -34,10 +34,23 @@ let isQuitting = false;
 // App directory
 const isDev = !app.isPackaged;
 
+// Windows groups the window with the taskbar entry (and shows its icon
+// correctly at small sizes) through the AppUserModelID, which must match the
+// appId used by electron-builder.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('io.aisphere');
+}
+
 function getTrayIconPath(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'icons', 'icon.png')
     : join(__dirname, '..', 'resources', 'icons', 'icon.png');
+}
+
+function getWindowIconPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'icons', 'icon.ico')
+    : join(__dirname, '..', 'resources', 'icons', 'icon.ico');
 }
 
 function showMainWindow(): void {
@@ -59,9 +72,13 @@ function createTray(): void {
   if (tray) return;
 
   const iconPath = getTrayIconPath();
-  const icon = nativeImage.createFromPath(iconPath);
+  let icon = nativeImage.createFromPath(iconPath);
   if (icon.isEmpty()) {
     console.warn(`Tray icon not found at ${iconPath}`);
+  } else {
+    // Notification-area icons are tiny; downscale the 256px source here so the
+    // tray shows crisp artwork instead of a shell-scaled render.
+    icon = icon.resize({ width: 16, height: 16, quality: 'best' });
   }
 
   tray = new Tray(icon);
@@ -92,6 +109,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     titleBarStyle: 'default',
     title: 'AiSphere',
+    icon: getWindowIconPath(),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
