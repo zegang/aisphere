@@ -1,0 +1,9 @@
+{
+  "name": "Chat Hooks Pack",
+  "kind": "hook",
+  "hooks": [
+    { "event": "message-send", "name": "Context Guard", "description": "Sanitizes the outgoing message before it reaches the model." },
+    { "event": "assistant-reply", "name": "Follow-up Suggester", "description": "Generates suggested follow-up questions after each reply." },
+    { "event": "tool-call", "name": "Tool Audit Log", "description": "Writes every tool invocation to the local audit log." }
+  ]
+}

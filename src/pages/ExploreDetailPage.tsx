@@ -107,6 +107,9 @@ export default function ExploreDetailPage() {
                 <span className="text-xs px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-bold uppercase">
                   {app.category}
                 </span>
+                <span className="text-xs px-2.5 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 font-bold uppercase">
+                  {t(`explore.kinds.${app.kind ?? 'app'}`)}
+                </span>
               </div>
               <p className="text-light-subtle dark:text-dark-subtle">@{app.org}</p>
               <p className="text-light-subtle dark:text-dark-subtle">{app.description}</p>

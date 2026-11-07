@@ -68,6 +68,53 @@
       "podman": "Podman",
       "conda": "Conda",
       "native": "原生"
+    },
+    "kinds": {
+      "all": "全部",
+      "app": "应用",
+      "engine": "LLM 引擎",
+      "webui": "Web UI",
+      "agent": "智能体",
+      "skill": "技能",
+      "tool": "工具",
+      "instructions": "指令",
+      "mcp": "MCP 服务器",
+      "hook": "钩子"
+    },
+    "export": {
+      "button": "导出",
+      "title": "导出应用说明",
+      "layout": "导出方式",
+      "mode_single": "合并为一个文件",
+      "mode_single_desc": "所有应用说明保存到一个 JSON 文件中。",
+      "mode_folder": "每个应用独立一个文件",
+      "mode_folder_desc": "在所选位置新建一个文件夹，每个应用说明为一个 JSON 文件。",
+      "mode_zip": "独立文件并打包压缩",
+      "mode_zip_desc": "同文件夹方式，但导出后打包为 .zip 压缩包。",
+      "scope": "导出范围",
+      "scope_all": "全部应用（{{count}}）",
+      "scope_filtered": "当前筛选结果（{{count}}）",
+      "timestamp_note": "导出的文件与文件夹名称会包含导出时间。",
+      "confirm": "导出",
+      "cancel": "取消",
+      "exporting": "正在导出…",
+      "done": "已导出 {{count}} 个应用说明。",
+      "failed": "导出失败。",
+      "close": "关闭"
+    },
+    "import": {
+      "button": "导入",
+      "title": "导入应用说明",
+      "hint": "选择应用说明文件、文件夹或 .zip 压缩包；应用目录中已存在的应用会被跳过。",
+      "files": "选择文件",
+      "files_desc": "支持单个 .json、合并文件、多选文件，以及 .zip 压缩包。",
+      "folder": "选择文件夹",
+      "folder_desc": "读取文件夹内每个应用的 .json 文件。",
+      "done": "已导入 {{imported}} 个，跳过 {{skipped}} 个。",
+      "skipped_list": "跳过：{{names}}",
+      "nothing_new": "所选内容均已存在于应用目录中。",
+      "failed": "导入失败。",
+      "close": "关闭"
     }
   },
   "runtimes": {
@@ -230,7 +277,8 @@
     "action": {
       "view": "查看",
       "web_ui": "网页界面",
-      "open_url": "打开 {{url}}"
+      "open_url": "打开 {{url}}",
+      "in_workspace": "已接入工作区"
     },
     "status": {
       "stopped": "已停止",
@@ -295,7 +343,6 @@
     "switch_dark": "切换到深色模式"
   },
   "sidebar": {
-    "note": "笔记",
     "workspace": "工作区",
     "home": "主页",
     "runtimes": "运行时",
@@ -348,7 +395,7 @@
     "cancel": "取消",
     "start_launch": "启动并打开"
   },
-  "notes": {
+  "workspace": {
     "sources": "来源",
     "search_sources": "搜索来源...",
     "studio": "工作室",
@@ -362,11 +409,26 @@
     "architecture_body": "路线图建议转向去中心化的容器注册表...",
     "create_note": "创建新的保存回复或笔记",
     "generate_report": "生成报告",
-    "ask_placeholder": "就你的来源提问...",
+    "ask_placeholder": "向你的工作区智能体提问...",
     "disclaimer": "AI 可能会出错，请核实重要信息。",
     "initial_message": "你好！我已分析你的来源。今天有什么可以帮你？",
-    "mock_response": "作为 {{model}}，我正在根据上传的来源处理你的请求...",
+    "agent_via": "智能体 {{agent}}",
+    "skills_via": "技能：{{skills}}。",
+    "tools_via": "工具（{{count}} 个）：{{tools}}。",
     "read_aloud": "朗读",
+    "agent_picker": "选择运行此对话的智能体",
+    "agent_meta": "{{skills}} 项技能 · {{tools}} 个工具",
+    "no_agent": "无智能体（直接对话）",
+    "mock_response": "{{agent}}\n正在使用 {{model}} 回答。\n{{skills}}{{tools}}我正在基于附加的工作区上下文处理你的请求...",
+    "tab_agents": "智能体",
+    "tab_skills": "技能",
+    "tab_mcp": "MCP",
+    "tab_studio": "工作室",
+    "tools": {
+      "title": "MCP 工具",
+      "clear": "清空",
+      "empty": "没有运行中的 MCP 服务器。请在 MCP 页启用一个服务器。"
+    },
     "models": {
       "title": "本地模型",
       "count": "已检测到 {{count}} 个",
@@ -374,6 +436,126 @@
       "empty": "未检测到本地 GGUF 模型。请从“探索”页安装模型应用，然后刷新。",
       "refresh": "刷新模型列表",
       "app": "来自 {{app}}"
+    },
+    "agents": {
+      "count": "工作区中共有 {{count}} 个智能体",
+      "new": "新建智能体",
+      "new_title": "创建智能体",
+      "edit_title": "编辑 {{name}}",
+      "edit": "编辑智能体",
+      "delete": "删除智能体",
+      "delete_confirm": "删除智能体“{{name}}”？",
+      "create": "创建智能体",
+      "save": "保存修改",
+      "cancel": "取消",
+      "builtin": "内置",
+      "active_chat": "当前对话使用中",
+      "set_active": "在对话中使用",
+      "default_model": "默认模型",
+      "skills_count": "{{count}} 项技能",
+      "tools_count": "{{count}} 个工具",
+      "no_tools": "没有运行中的 MCP 服务器。请在 MCP 页启用服务器以附加工具。",
+      "field_emoji": "图标",
+      "field_name": "智能体名称",
+      "field_description": "简要描述这个智能体做什么",
+      "field_instructions": "自定义指令（系统提示词）",
+      "field_model": "模型",
+      "field_skills": "技能",
+      "field_tools": "MCP 工具"
+    },
+    "skills": {
+      "count": "工作区中共有 {{count}} 项技能",
+      "new": "新建技能",
+      "new_title": "创建技能",
+      "search": "搜索技能...",
+      "create": "创建技能",
+      "toggle": "切换 {{name}}",
+      "delete": "删除技能",
+      "no_description": "未提供描述。",
+      "empty_search": "没有匹配的技能。",
+      "field_name": "技能名称",
+      "field_description": "简要描述",
+      "field_instructions": "技能启用时模型收到的指令",
+      "source": {
+        "builtin": "内置",
+        "custom": "自定义",
+        "local": "本地"
+      }
+    },
+    "mcp": {
+      "count": "{{count}} 个 MCP 服务器",
+      "new": "添加服务器",
+      "new_title": "添加 MCP 服务器",
+      "no_description": "未提供描述。",
+      "toggle": "切换 {{name}}",
+      "delete": "删除服务器",
+      "delete_confirm": "移除 MCP 服务器“{{name}}”及其工具？",
+      "status": {
+        "running": "运行中",
+        "connecting": "连接中",
+        "stopped": "已停止",
+        "error": "错误"
+      },
+      "tools_count": "{{count}}/{{total}} 个工具可用",
+      "field_name": "服务器名称",
+      "field_description": "简要描述",
+      "field_transport": "传输方式",
+      "field_command": "命令（如 npx / uvx）",
+      "field_args": "参数（空格分隔）",
+      "enable_now": "立即启用并连接",
+      "cancel": "取消",
+      "create": "添加",
+      "providers_tools": "安装后将在工作区提供 {{count}} 个工具。"
+    },
+    "workspaces": {
+      "title": "工作区",
+      "new": "新建工作区",
+      "rename": "重命名工作区",
+      "delete": "删除工作区",
+      "delete_confirm": "删除工作区“{{name}}”及其对话？",
+      "untitled": "工作区 {{n}}"
+    },
+    "instructions": {
+      "title": "指令（AGENTS.md）",
+      "toggle": "切换指令包 {{name}}"
+    },
+    "hooks": {
+      "title": "钩子",
+      "toggle": "切换钩子 {{name}}",
+      "event": {
+        "session-start": "会话开始",
+        "message-send": "消息发送",
+        "assistant-reply": "助手回复",
+        "tool-call": "工具调用"
+      }
+    },
+    "web": {
+      "title": "Web 应用",
+      "open": "打开"
+    },
+    "instructions_applied": "已应用指令：{{names}}。",
+    "hooks_applied": "已应用钩子：{{names}}。",
+    "engines": {
+      "status_running": "运行中",
+      "status_stopped": "已停止",
+      "status_starting": "启动中…",
+      "status_stopping": "正在停止…",
+      "status_failed": "启动失败",
+      "status_unknown": "状态未知",
+      "needs_start": "选择已停止引擎的模型时会询问是否启动该引擎。",
+      "start_title": "启动引擎？",
+      "start_question": "引擎“{{engine}}”尚未运行。是否启动它，以便所选模型可以回答？",
+      "start_button": "启动引擎",
+      "cancel": "取消",
+      "starting": "正在启动 {{engine}}… 这可能需要一点时间。",
+      "runtime_needed": "“{{engine}}”引擎需要先运行其容器运行时。请在上方弹出的运行环境对话框中确认。",
+      "started": "{{engine}} 已运行，模型就绪。",
+      "start_failed": "引擎启动失败。",
+      "retry": "重试",
+      "close": "关闭",
+      "background": "后台运行",
+      "use_model": "使用该模型",
+      "timeout": "等待引擎启动超时。"
     }
   }
 }

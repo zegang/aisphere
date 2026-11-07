@@ -1,0 +1,12 @@
+{
+  "name": "GitHub MCP Server",
+  "kind": "mcp",
+  "transport": "stdio",
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-github"],
+  "tools": [
+    { "name": "get_issue", "description": "Get details of a GitHub issue" },
+    { "name": "create_issue", "description": "Create a new issue in a GitHub repository" },
+    { "name": "list_pull_requests", "description": "List open pull requests of a repository" }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Deep Researcher Agent",
+  "kind": "agent",
+  "emoji": "🌐",
+  "instructions": "You are a deep research agent. Break the question into sub-questions, use web fetch and GitHub tools to gather evidence, then synthesize a cited report in Markdown.",
+  "skillIds": ["mkt-app-009"],
+  "toolIds": ["mkt-app-008:mkt-app-008-tool-1", "mkt-app-008:mkt-app-008-tool-3"]
+}

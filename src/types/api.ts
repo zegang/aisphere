@@ -56,6 +56,64 @@ export interface AppRuntime {
   args?: string[];
 }
 
+// --- Explore kinds: what a catalog entry provides to the workspace ---
+
+/**
+ * Kinds follow the industry component model for AI workstations:
+ * - `engine`       LLM inference engine exposing an OpenAI-compatible API
+ *                  (llama.cpp, Ollama, vLLM…), models auto-detected from packages
+ * - `webui`        chat web front-end (Open WebUI …) openable in the workspace web view
+ * - `agent`        agent profile (VS Code / Claude subagent convention)
+ * - `skill`        agent skill pack (Anthropic SKILL.md convention)
+ * - `hook`         lifecycle hooks (session-start / message-send / assistant-reply / tool-call)
+ * - `instructions` global instruction pack (AGENTS.md convention)
+ * - `tool`         local tool pack exposed through the workspace tools menu
+ * - `mcp`          MCP server (Model Context Protocol)
+ * - `app`          plain runnable application
+ */
+export type AppKind =
+  | 'engine'
+  | 'webui'
+  | 'agent'
+  | 'skill'
+  | 'hook'
+  | 'tool'
+  | 'instructions'
+  | 'mcp'
+  | 'app';
+
+export type HookEvent = 'session-start' | 'message-send' | 'assistant-reply' | 'tool-call';
+
+export interface HookDefinition {
+  event: HookEvent;
+  name: string;
+  description?: string;
+}
+
+/**
+ * Declarative manifest describing what gets registered in the workspace after
+ * the app is installed. Only the section matching `kind` is consumed.
+ */
+export interface AppComponentManifest {
+  /** kinds `mcp` / `tool`: server definition registered in the workspace. */
+  server?: {
+    transport: 'stdio' | 'http' | 'sse' | 'local';
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+    tools?: Array<{ name: string; description: string }>;
+  };
+  /** kind `skill`: instruction the model receives while the skill is active. */
+  skill?: { instructions: string };
+  /** kind `agent`: agent profile payload. `skillIds` may reference other installed skills. */
+  agent?: { emoji?: string; instructions?: string; skillIds?: string[]; toolIds?: string[] };
+  /** kind `hook`: hook definitions registered on the workspace lifecycle events. */
+  hooks?: HookDefinition[];
+  /** kind `instructions`: AGENTS.md-style instruction content. */
+  instructions?: { content: string };
+}
+
 export interface Application {
   id: string;
   name: string;
@@ -76,6 +134,10 @@ export interface Application {
     gpu: string;
   };
   packages: string[];
+  /** Workspace capability provided by this catalog entry (default `app`). */
+  kind?: AppKind;
+  /** Declarative manifest consumed by the workspace after installation. */
+  component?: AppComponentManifest;
   install?: {
     installed: boolean;
     installed_at: string;

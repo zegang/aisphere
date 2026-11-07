@@ -18,12 +18,12 @@ import AppWorkspace from './pages/AppWorkspace';
 import RuntimePage from './pages/RuntimePage';
 import RuntimeDetailPage from './pages/RuntimeDetailPage';
 import ExploreDetailPage from './pages/ExploreDetailPage';
-import NotePage from './pages/NotePage';
+import WorkspacePage from './pages/WorkspacePage';
 import { RuntimeStartDialog } from './components/RuntimeStartDialog';
 import appIcon from '@/assets/app-icon.png';
 
 const viewComponents: Record<string, React.ReactNode> = {
-  note: <NotePage />,
+  workspace: <WorkspacePage />,
   home: <HomePage />,
   apps: <AppsPage />,
   explore: <ExplorePage />,

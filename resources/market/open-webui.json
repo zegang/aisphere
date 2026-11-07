@@ -1,0 +1,8 @@
+{
+  "name": "Open WebUI",
+  "kind": "webui",
+  "image": "ghcr.io/open-webui/open-webui:main",
+  "hostPort": 8092,
+  "containerPort": 8080,
+  "notes": "Serve at http://127.0.0.1:8092 after the container is running."
+}

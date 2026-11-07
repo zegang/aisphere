@@ -1,8 +1,8 @@
-import { ipcMain } from 'electron';
+import { ipcMain, dialog, shell } from 'electron';
 import { randomUUID } from 'crypto';
 import os from 'os';
 import { execFile, spawn } from 'child_process';
-import { existsSync, readdirSync, promises as fs } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, promises as fs } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import * as pty from 'node-pty';
 import { Application, AppRuntime } from '../../src/types/api';
@@ -13,9 +13,15 @@ import { ServiceContainer } from './ServiceContainer';
 import { SandboxService } from './SandboxService';
 import { Downloader } from '../utils/downloader';
 import { getDataPath } from '../utils/app-paths';
+import { compressDirectory, extractArchive, fileStamp, collectSpecJsonFiles } from '../utils/spec-io';
+import { DbStoreService } from './DbStoreService';
+import { LowDbStore } from '../utils/dbstore/lowdb-store';
+import { NAMESPACE_DEFAULT, MODULE_SETTING } from '../../src/shared/modules';
 import {
   IpcResponse,
   RUNTIME_CHECK,
+  RUNTIME_CONFIG_EXPORT,
+  RUNTIME_CONFIG_IMPORT,
   RUNTIME_DETAIL,
   RUNTIME_ENGINE_START,
   RUNTIME_ENGINE_STATUS,
@@ -26,6 +32,7 @@ import {
   RUNTIME_INSTALL_RESIZE,
   RUNTIME_INSTALL_STATUS,
   RUNTIME_UNINSTALL,
+  RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeConfigSpec,
   RuntimeDetail,
   RuntimeEngineStatus,
   RuntimeInstallState,
@@ -103,19 +110,7 @@ export class RuntimeService implements Service {
       // probing, otherwise a runtime installed by a previous session would be
       // reported as missing.
       this.registerRuntimePaths();
-      const results = await Promise.all(SUPPORTED_RUNTIMES.map(async (type) => {
-        const managed = existsSync(getDataPath('runtimes', type));
-        try {
-          let version = '';
-          await this.getSandbox().runCommand(type, ['--version'], {
-            onLog: (data) => { version += data; }
-          });
-          return { type, installed: true, managed, version: version.trim() };
-        } catch {
-          return { type, installed: false, managed };
-        }
-      }));
-      return { success: true, data: { runtimes: results } };
+      return { success: true, data: { runtimes: await this.probeRuntimes() } };
     });
 
     ipcMain.handle(RUNTIME_DETAIL, async (_event, type: string) => {
@@ -293,6 +288,24 @@ export class RuntimeService implements Service {
 
     ipcMain.handle(RUNTIME_INSTALL_STATUS, async () => {
       return { success: true, data: { statuses: [...this.installStates.values()] } };
+    });
+
+    ipcMain.handle(RUNTIME_CONFIG_EXPORT, async (_event, req: RuntimeConfigExportRequest): Promise<IpcResponse<RuntimeConfigExportResult>> => {
+      try {
+        return { success: true, data: await this.exportRuntimeConfig(req) };
+      } catch (e: any) {
+        this.getLogger().error(`Runtime config export failed: ${e?.message ?? e}`, this.name);
+        return { success: false, error: e?.message ?? String(e) };
+      }
+    });
+
+    ipcMain.handle(RUNTIME_CONFIG_IMPORT, async (_event, req: RuntimeConfigImportRequest): Promise<IpcResponse<RuntimeConfigImportResult>> => {
+      try {
+        return { success: true, data: await this.importRuntimeConfigs(req) };
+      } catch (e: any) {
+        this.getLogger().error(`Runtime config import failed: ${e?.message ?? e}`, this.name);
+        return { success: false, error: e?.message ?? String(e) };
+      }
     });
 
     ipcMain.handle(RUNTIME_INSTALL_ABORT, async (_event, type: string) => {
@@ -1455,5 +1468,235 @@ export class RuntimeService implements Service {
     const rc = app.task?.rc || (app.runtime as any)?.runtime;
     if (!rc) throw new Error(`No runtime class found for ${app.name}`);
     return this.getRuntime(rc as RuntimeClass);
+  }
+
+  // ---- Runtime configuration export / import (运行时配置) ----
+
+  private getSettingStore() {
+    const dbSvc = ServiceContainer.getInstance().get(ServiceName.DbStoreService) as DbStoreService;
+    return dbSvc.getDB(LowDbStore, NAMESPACE_DEFAULT, MODULE_SETTING);
+  }
+
+  /**
+   * Probes every supported runtime: which CLI is available and whether it
+   * lives inside the AiSphere data folder. Shared by `runtime:check` and the
+   * config export.
+   */
+  private async probeRuntimes(): Promise<Array<{ type: RuntimeKind; installed: boolean; managed: boolean; version?: string }>> {
+    return Promise.all(SUPPORTED_RUNTIMES.map(async (type) => {
+      const managed = existsSync(getDataPath('runtimes', type));
+      try {
+        let version = '';
+        await this.getSandbox().runCommand(type, ['--version'], {
+          onLog: (data) => { version += data; }
+        });
+        return { type, installed: true, managed, version: version.trim() };
+      } catch {
+        return { type, installed: false, managed };
+      }
+    }));
+  }
+
+  /** Current autoStart preference of a runtime ('always' | 'never' | null). */
+  private async readRuntimeAutoStart(type: RuntimeKind): Promise<'always' | 'never' | null> {
+    const records = await this.getSettingStore().getBy<{ id: string; key: string; value: string }>({ key: `runtime.autoStart.${type}` });
+    const value = records[0]?.value;
+    return value === 'always' || value === 'never' ? value : null;
+  }
+
+  /** Writes or clears the autoStart preference of a runtime. */
+  private async writeRuntimeAutoStart(type: RuntimeKind, autoStart: 'always' | 'never' | null): Promise<void> {
+    const store = this.getSettingStore();
+    const key = `runtime.autoStart.${type}`;
+    const records = await store.getBy<{ id: string; key: string; value: string }>({ key });
+
+    if (autoStart === null) {
+      if (records.length > 0) await store.deleteBy({ key });
+      return;
+    }
+    if (records.length > 0) {
+      await store.update(records[0].id, { ...records[0], key, value: autoStart });
+    } else {
+      await store.insert({ key, value: autoStart });
+    }
+  }
+
+  /**
+   * Snapshot of every runtime's configuration: the remembered autoStart
+   * preference plus informational installed/managed/version fields.
+   */
+  private async buildRuntimeConfigSpecs(): Promise<RuntimeConfigSpec[]> {
+    this.registerRuntimePaths();
+    const probes = await this.probeRuntimes();
+    return Promise.all(SUPPORTED_RUNTIMES.map(async (type) => {
+      const probe = probes.find((p) => p.type === type);
+      return {
+        type,
+        name: runtimeLabel(type),
+        hasEngine: type === 'docker' || type === 'podman',
+        autoStart: await this.readRuntimeAutoStart(type),
+        installed: !!probe?.installed,
+        managed: !!probe?.managed,
+        version: probe?.version,
+      };
+    }));
+  }
+
+  /**
+   * Saves the runtime configurations. `single` writes one combined JSON
+   * (`aisphere-runtimes-<ts>.json`), `folder` a new folder with one file per
+   * runtime, `zip` the same folder packaged as `.zip`. Folder and file names
+   * embed the export timestamp. `targetPath` (file path for `single`,
+   * destination directory otherwise) skips the native dialog for automation.
+   */
+  private async exportRuntimeConfig(req: RuntimeConfigExportRequest): Promise<RuntimeConfigExportResult> {
+    const mode = req?.mode ?? 'single';
+    const specs = await this.buildRuntimeConfigSpecs();
+    const ts = fileStamp();
+
+    if (mode === 'single') {
+      let filePath = req.targetPath || '';
+      if (!filePath) {
+        const r = await dialog.showSaveDialog({
+          title: 'Export runtime configuration',
+          defaultPath: `aisphere-runtimes-${ts}.json`,
+          filters: [{ name: 'AiSphere Runtime Config (JSON)', extensions: ['json'] }],
+        });
+        if (r.canceled || !r.filePath) throw new Error('Export canceled.');
+        filePath = r.filePath;
+      }
+      writeFileSync(
+        filePath,
+        JSON.stringify({ schema: 'aisphere.runtime-config', version: 1, exportedAt: new Date().toISOString(), runtimes: specs }, null, 2) + '\n',
+        'utf8',
+      );
+      shell.showItemInFolder(filePath);
+      this.getLogger().info(`Exported runtime configuration to ${filePath}`, this.name);
+      return { kind: 'file', path: filePath, count: specs.length };
+    }
+
+    // folder / zip: choose (or take) a destination directory
+    let parent = req.targetPath || '';
+    if (!parent) {
+      const r = await dialog.showOpenDialog({
+        title: 'Choose export location',
+        properties: ['openDirectory', 'createDirectory'],
+      });
+      if (r.canceled || !r.filePaths[0]) throw new Error('Export canceled.');
+      parent = r.filePaths[0];
+    }
+    const folderName = `aisphere-runtimes-${ts}`;
+    const realFolder = join(parent, folderName);
+    mkdirSync(realFolder, { recursive: true });
+
+    const exportedAt = new Date().toISOString();
+    for (const spec of specs) {
+      const file = join(realFolder, `runtime-${spec.type}-${ts}.json`);
+      writeFileSync(
+        file,
+        JSON.stringify({ schema: 'aisphere.runtime-config-spec', version: 1, exportedAt, runtime: spec }, null, 2) + '\n',
+        'utf8',
+      );
+    }
+
+    if (mode !== 'zip') {
+      shell.openPath(realFolder);
+      this.getLogger().info(`Exported runtime configuration to ${realFolder}`, this.name);
+      return { kind: 'folder', path: realFolder, count: specs.length };
+    }
+
+    const zipPath = join(parent, `${folderName}.zip`);
+    await compressDirectory(realFolder, zipPath);
+    rmSync(realFolder, { recursive: true, force: true });
+    shell.showItemInFolder(zipPath);
+    this.getLogger().info(`Exported runtime configuration to archive ${zipPath}`, this.name);
+    return { kind: 'zip', path: zipPath, count: specs.length };
+  }
+
+  /**
+   * Reads runtime configuration specs from files (.json single or combined),
+   * a folder of per-runtime JSON files, or a .zip archive and applies the
+   * remembered autoStart preferences back onto this machine. The
+   * informational fields (installed/managed/version) are not replayed —
+   * runtimes themselves are installed through the runtime page.
+   */
+  private async importRuntimeConfigs(req: RuntimeConfigImportRequest): Promise<RuntimeConfigImportResult> {
+    let paths = req?.paths ?? [];
+    if (paths.length === 0) {
+      const source = req?.source ?? 'file';
+      const r = await dialog.showOpenDialog({
+        title: 'Import runtime configuration',
+        properties: source === 'folder' ? ['openDirectory'] : ['openFile', 'multiSelections'],
+        filters: source === 'folder' ? undefined : [
+          { name: 'AiSphere Runtime Config (JSON/ZIP)', extensions: ['json', 'zip'] },
+          { name: 'JSON', extensions: ['json'] },
+          { name: 'ZIP archive', extensions: ['zip'] },
+        ],
+      });
+      if (r.canceled || r.filePaths.length === 0) throw new Error('Import canceled.');
+      paths = r.filePaths;
+    }
+
+    const { files: specFiles, tempDirs } = await collectSpecJsonFiles(paths);
+    try {
+      if (specFiles.length === 0) throw new Error('No .json runtime config files found in the selection.');
+
+      // Parse: `{ runtime }` wrapper, `{ runtimes: […] }` combined, bare spec, or array.
+      const parsed: any[] = [];
+      for (const file of specFiles) {
+        let json: unknown;
+        try { json = JSON.parse(readFileSync(file, 'utf8')); } catch { continue; }
+        if (Array.isArray(json)) parsed.push(...json);
+        else if (json && typeof json === 'object') {
+          const obj = json as Record<string, unknown>;
+          if (Array.isArray(obj.runtimes)) parsed.push(...obj.runtimes);
+          else parsed.push(obj);
+        }
+      }
+      const specs = parsed.map((raw) => this.normalizeRuntimeSpec(raw)).filter((s): s is RuntimeConfigSpec => s !== null);
+      if (specs.length === 0) throw new Error('No valid runtime configuration found in the selection.');
+
+      const imported: RuntimeConfigImportResult['imported'] = [];
+      const skipped: RuntimeConfigImportResult['skipped'] = [];
+      const seen = new Set<string>();
+      for (const spec of specs) {
+        if (seen.has(spec.type)) {
+          skipped.push({ type: spec.type, reason: 'duplicate' });
+          continue;
+        }
+        seen.add(spec.type);
+        await this.writeRuntimeAutoStart(spec.type, spec.autoStart);
+        imported.push({ type: spec.type, name: spec.name, autoStart: spec.autoStart });
+        this.getLogger().info(`Imported runtime configuration for ${spec.type}: autoStart=${spec.autoStart ?? 'unset'}`, this.name);
+      }
+      return { imported, skipped };
+    } finally {
+      for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** Coerces a parsed object into a RuntimeConfigSpec, or null when unusable. */
+  private normalizeRuntimeSpec(raw: unknown): RuntimeConfigSpec | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = (raw as Record<string, any>).runtime && typeof (raw as Record<string, any>).runtime === 'object'
+      ? (raw as Record<string, any>).runtime
+      : (raw as Record<string, any>);
+    if (!obj || typeof obj.type !== 'string' || !SUPPORTED_RUNTIMES.includes(obj.type as RuntimeKind)) return null;
+    const type = obj.type as RuntimeKind;
+    const autoStart = obj.autoStart === 'always' || obj.autoStart === 'never'
+      ? obj.autoStart
+      : obj.autoStart === null || obj.autoStart === undefined ? null : obj.autoStart === 'unset' ? null : null;
+    if (obj.autoStart !== undefined && obj.autoStart !== null && obj.autoStart !== 'unset' && autoStart === null) {
+      return null; // invalid non-empty autoStart value
+    }
+    return {
+      type,
+      name: String(obj.name ?? runtimeLabel(type)),
+      hasEngine: obj.hasEngine !== undefined ? !!obj.hasEngine : type === 'docker' || type === 'podman',
+      autoStart: autoStart as 'always' | 'never' | null,
+      installed: !!obj.installed,
+      managed: !!obj.managed,
+      version: obj.version !== undefined ? String(obj.version) : undefined,
+    };
   }
 }

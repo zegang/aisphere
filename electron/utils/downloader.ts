@@ -134,8 +134,12 @@ export class Downloader {
     const filePath = join(destinationFolder, filename);
 
     switch (urlObj.protocol) {
-      case 'file:':
-        return this.downloadFromFile(urlObj.pathname, filePath, url, options);
+      case 'file:': {
+        // Windows file URLs produce pathname '/D:/…'; strip the leading slash
+        // so the path resolves to 'D:/…' instead of 'D:\D:\…'.
+        const filePathArg = decodeURIComponent(urlObj.pathname).replace(/^\/(?=[A-Za-z]:)/, '');
+        return this.downloadFromFile(filePathArg, filePath, url, options);
+      }
       case 'http:':
       case 'https:':
         return this.downloadFromHttp(url, filePath, options);

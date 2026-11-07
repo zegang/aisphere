@@ -1,0 +1,5 @@
+{
+  "name": "Web Search Skill",
+  "kind": "skill",
+  "instructions": "Before answering factual questions, outline the search queries required, request the Fetch MCP tools, and merge the results into the answer with source links."
+}

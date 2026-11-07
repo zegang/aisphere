@@ -11,7 +11,7 @@ export type AiSphereView =
   | 'runtimes'
   | 'runtimedetail'
   | 'exploredetail'
-  | 'note';
+  | 'workspace';
 
 interface AiSphereStore {
   view: AiSphereView;

@@ -1,4 +1,30 @@
 import { Application } from '../../src/types/api'
+import { pathToFileURL } from 'url';
+import { join } from 'path';
+import { existsSync } from 'fs';
+
+/**
+ * Locates `resources/market` for the local component artifacts. In packaged
+ * builds the whole `resources` dir is shipped via extraResources, so the files
+ * live next to the executable under `process.resourcesPath`; in dev they live
+ * in the project folder.
+ */
+const marketDirCandidates = [
+  join(process.resourcesPath ?? '', 'market'),
+  join(process.cwd(), 'resources', 'market'),
+];
+const marketDir = marketDirCandidates.find((dir) => existsSync(dir)) ?? marketDirCandidates[1];
+
+/** file:// URL of a marketplace artifact shipped with the app. */
+const marketFile = (name: string) => pathToFileURL(join(marketDir, name)).href;
+
+const appRequirements = {
+  platform: 'any' as const,
+  cpu: 'x64',
+  memory: 'Minimal',
+  storage: '1MB',
+  gpu: 'Not required',
+};
 
 export const MOCK_APPLICATIONS: Application[] = [
   {
@@ -10,6 +36,7 @@ export const MOCK_APPLICATIONS: Application[] = [
     description: 'Run large language models locally.',
     category: 'LLMs Inference Engine',
     type: 'llm',
+    kind: 'engine',
     runtime: {
       runtime: 'apptainer',
     },
@@ -32,6 +59,7 @@ export const MOCK_APPLICATIONS: Application[] = [
     description: 'Run large language models locally.',
     category: 'WebUI',
     type: 'llm',
+    kind: 'webui',
     runtime: {
       runtime: 'podman',
       options: ['-p 6060:8080', '--entrypoint "/app/backend/start.sh"']
@@ -58,6 +86,7 @@ export const MOCK_APPLICATIONS: Application[] = [
     description: 'High-throughput and memory-efficient inference engine for LLMs.',
     category: 'LLMs Inference Engine',
     type: 'llm',
+    kind: 'engine',
     runtime: {
       runtime: 'conda',
       install:[ 'pytroch', 'trochvision', 'torchaudio', 'pytroch-cuda=11.8', '-c pytorch', '-c nvidia'],
@@ -82,6 +111,7 @@ export const MOCK_APPLICATIONS: Application[] = [
     description: 'A structured generation language for LLMs, optimized for performance.',
     category: 'LLMs Inference Engine',
     type: 'llm',
+    kind: 'engine',
     runtime: {
       runtime: 'conda',
       args: ['--model-path', 'meta-llama/Llama-3-8B']
@@ -105,6 +135,7 @@ export const MOCK_APPLICATIONS: Application[] = [
     description: 'Chat with a compact Qwen2.5 0.5B model in your browser. Runs llama.cpp in Docker with its built-in web UI.',
     category: 'LLMs Inference Engine',
     type: 'llm',
+    kind: 'engine',
     runtime: {
       runtime: 'docker',
       image: 'ghcr.io/ggml-org/llama.cpp:server',
@@ -133,6 +164,7 @@ export const MOCK_APPLICATIONS: Application[] = [
     description: 'Chat with DeepSeek-R1-Distill-Qwen-1.5B locally. Runs llama.cpp in Docker with its built-in web UI; the downloaded GGUF model is detected automatically by the Notes workspace.',
     category: 'LLMs Inference Engine',
     type: 'llm',
+    kind: 'engine',
     runtime: {
       runtime: 'docker',
       image: 'ghcr.io/ggml-org/llama.cpp:server',
@@ -151,5 +183,165 @@ export const MOCK_APPLICATIONS: Application[] = [
     packages: [
       'https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf'
     ]
+  },
+  {
+    id: 'app-007',
+    name: 'Open WebUI',
+    org: 'Open WebUI',
+    url: 'https://github.com/open-webui/open-webui',
+    version: 'latest',
+    description: 'Open WebUI: a self-hosted chat front-end for local LLM engines. The workspace opens its web interface as a tab once it is running.',
+    category: 'WebUI',
+    type: 'llm',
+    kind: 'webui',
+    runtime: {
+      runtime: 'docker',
+      image: 'ghcr.io/open-webui/open-webui:main',
+      options: ['-p', '8092:8080', '--add-host', 'host.docker.internal:host-gateway']
+    },
+    labels: ['local', 'chat', 'webui', 'docker', 'open-webui'],
+    requirements: {
+      platform: 'any',
+      cpu: 'x64',
+      memory: '4GB RAM',
+      storage: '5GB',
+      gpu: 'Not required'
+    },
+    packages: [marketFile('open-webui.json')]
+  },
+  {
+    id: 'app-008',
+    name: 'GitHub MCP Server',
+    org: 'Model Context Protocol',
+    url: 'https://github.com/modelcontextprotocol/servers',
+    version: 'latest',
+    description: 'MCP server exposing GitHub tools (issues, pull requests, code search) so workspace agents can operate on repositories.',
+    category: 'MCP Server',
+    type: 'tool',
+    kind: 'mcp',
+    runtime: {
+      runtime: 'native',
+      args: ['-y', '@modelcontextprotocol/server-github']
+    },
+    labels: ['mcp', 'tools', 'github'],
+    requirements: { ...appRequirements },
+    component: {
+      server: {
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-github'],
+        tools: [
+          { name: 'get_issue', description: 'Get details of a GitHub issue' },
+          { name: 'create_issue', description: 'Create a new issue in a GitHub repository' },
+          { name: 'list_pull_requests', description: 'List open pull requests of a repository' }
+        ]
+      }
+    },
+    packages: [marketFile('mcp-github.json')]
+  },
+  {
+    id: 'app-009',
+    name: 'Web Search Skill',
+    org: 'AiSphere Skills',
+    version: '1.0.0',
+    description: 'Agent skill following the SKILL.md convention: teaches agents to plan web searches and merge results before answering.',
+    category: 'Skills',
+    type: 'tool',
+    kind: 'skill',
+    runtime: { runtime: 'native' },
+    labels: ['skill', 'research', 'web'],
+    requirements: { ...appRequirements },
+    component: {
+      skill: {
+        instructions: 'Before answering factual questions, outline the search queries required, request the Fetch MCP tools, and merge the results into the answer with source links.'
+      }
+    },
+    packages: [marketFile('skill-web-search.json')]
+  },
+  {
+    id: 'app-010',
+    name: 'Deep Researcher Agent',
+    org: 'AiSphere Agents',
+    version: '1.0.0',
+    description: 'Market agent that decomposes a question, gathers evidence with GitHub tools and the Web Search skill, then writes a cited report.',
+    category: 'Agents',
+    type: 'agent',
+    kind: 'agent',
+    runtime: { runtime: 'native' },
+    labels: ['agent', 'research', 'citation'],
+    requirements: { ...appRequirements },
+    component: {
+      agent: {
+        emoji: '🌐',
+        instructions: 'You are a deep research agent. Break the question into sub-questions, use web fetch and GitHub tools to gather evidence, then synthesize a cited report in Markdown.',
+        skillIds: ['mkt-app-009'],
+        toolIds: ['mkt-app-008:mkt-app-008-tool-1', 'mkt-app-008:mkt-app-008-tool-3']
+      }
+    },
+    packages: [marketFile('agent-deep-research.json')]
+  },
+  {
+    id: 'app-011',
+    name: 'Chat Hooks Pack',
+    org: 'AiSphere Automation',
+    version: '1.0.0',
+    description: 'Lifecycle hooks (Claude Code hooks convention) attached to the workspace: message-send, assistant-reply and tool-call events.',
+    category: 'Hooks',
+    type: 'tool',
+    kind: 'hook',
+    runtime: { runtime: 'native' },
+    labels: ['hooks', 'automation'],
+    requirements: { ...appRequirements },
+    component: {
+      hooks: [
+        { event: 'message-send', name: 'Context Guard', description: 'Sanitizes the outgoing message before it reaches the model.' },
+        { event: 'assistant-reply', name: 'Follow-up Suggester', description: 'Generates suggested follow-up questions after each reply.' },
+        { event: 'tool-call', name: 'Tool Audit Log', description: 'Writes every tool invocation to the local audit log.' }
+      ]
+    },
+    packages: [marketFile('hooks-pack.json')]
+  },
+  {
+    id: 'app-012',
+    name: 'Engineering Instructions',
+    org: 'AiSphere Instructions',
+    version: '1.0.0',
+    description: 'AGENTS.md-style global instruction pack applied to every workspace chat: local-first, cite sources, no silent remote calls.',
+    category: 'Instructions',
+    type: 'other',
+    kind: 'instructions',
+    runtime: { runtime: 'native' },
+    labels: ['agents.md', 'instructions', 'policy'],
+    requirements: { ...appRequirements },
+    component: {
+      instructions: {
+        content: '- Prefer local, privacy-preserving execution.\n- Keep answers concise and cite sources when tools are used.\n- Never send user content to remote services without confirmation.'
+      }
+    },
+    packages: [marketFile('instructions-engineering.json')]
+  },
+  {
+    id: 'app-013',
+    name: 'Workspace Tools Pack',
+    org: 'AiSphere Tools',
+    version: '1.0.0',
+    description: 'Local tool pack that appears directly in the workspace tools menu: note search, outline builder and Markdown export.',
+    category: 'Tools',
+    type: 'tool',
+    kind: 'tool',
+    runtime: { runtime: 'native' },
+    labels: ['tools', 'local', 'productivity'],
+    requirements: { ...appRequirements },
+    component: {
+      server: {
+        transport: 'local',
+        tools: [
+          { name: 'note_search', description: 'Search saved notes in the current workspace' },
+          { name: 'outline_builder', description: 'Build a Markdown outline from a set of notes' },
+          { name: 'export_md', description: 'Export chat or notes to a Markdown file' }
+        ]
+      }
+    },
+    packages: [marketFile('tools-pack.json')]
   }
 ]

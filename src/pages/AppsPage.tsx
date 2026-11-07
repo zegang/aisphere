@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
-import { Box, RefreshCw, Calendar, Play, Square, Globe, Eye } from 'lucide-react';
+import { Box, RefreshCw, Calendar, Play, Square, Globe, Eye, Puzzle } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 
 export default function AppsPage() {
@@ -80,6 +80,9 @@ export default function AppsPage() {
               ? (app.task.hostPorts['8080'] || Object.values(app.task.hostPorts)[0])
               : undefined;
             const webUrl = running && hostPort ? `http://localhost:${hostPort}` : undefined;
+            // Component kinds (MCP servers, skills, hooks…) are not runnable
+            // containers: they register themselves in the workspace registry.
+            const runnable = !app.kind || app.kind === 'app' || app.kind === 'engine' || app.kind === 'webui';
             // Neutral states need an explicit dark text color; inheriting the
             // light-theme gray would be almost invisible on a dark badge.
             const statusTone =
@@ -101,8 +104,10 @@ export default function AppsPage() {
             return (
               <div
                 key={app.id}
-                onClick={() => openWorkspace(app.id)}
-                className="relative bg-light-surface dark:bg-dark-surface rounded-xl p-5 border border-light-border dark:border-dark-border flex flex-col shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-blue-500/50 group"
+                onClick={() => {
+                  if (runnable) openWorkspace(app.id);
+                }}
+                className={`relative bg-light-surface dark:bg-dark-surface rounded-xl p-5 border border-light-border dark:border-dark-border flex flex-col shadow-sm hover:shadow-md transition-all group ${runnable ? 'cursor-pointer hover:border-blue-500/50' : ''}`}
               >
                 {/* Top row: icon + status only, so the status text never gets
                     squeezed by the title. Title and install date live below. */}
@@ -147,6 +152,12 @@ export default function AppsPage() {
                 )}
 
                 <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-light-border dark:border-dark-border">
+                  {!runnable ? (
+                    <span className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                      <Puzzle className="w-3.5 h-3.5" /> {t('apps.action.in_workspace')}
+                    </span>
+                  ) : (
+                  <>
                   {running || status === 'starting' ? (
                     <button
                       onClick={(e) => {
@@ -192,6 +203,8 @@ export default function AppsPage() {
                     >
                       <Globe className="w-3.5 h-3.5" /> {t('apps.action.web_ui')}
                     </button>
+                  )}
+                  </>
                   )}
                 </div>
               </div>

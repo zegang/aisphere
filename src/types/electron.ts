@@ -1,4 +1,4 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
   SETTING_LIST,
@@ -6,7 +6,8 @@ import {
   SETTING_UPDATE,
   SETTING_DELETE,
   AllChannels,
-  EXPLORE_DETAIL, EXPLORE_INSTALL, EXPLORE_LIST,
+  EXPLORE_DETAIL, EXPLORE_INSTALL, EXPLORE_LIST, EXPLORE_EXPORT, EXPLORE_IMPORT,
+  ExploreExportRequest, ExploreExportResult, ExploreImportRequest, ExploreImportResult,
   SYSTEM_INFO,
   UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY,
 } from '@/shared/channel-types';
@@ -44,6 +45,8 @@ export type ElectronInvokePayloadMap = {
   [EXPLORE_LIST]: undefined;
   [EXPLORE_DETAIL]: string;
   [EXPLORE_INSTALL]: Application;
+  [EXPLORE_EXPORT]: ExploreExportRequest;
+  [EXPLORE_IMPORT]: ExploreImportRequest;
 
   [SYSTEM_INFO]: undefined;
 
@@ -56,6 +59,8 @@ export type ElectronInvokePayloadMap = {
   [RUNTIME_ENGINE_STOP]: string;
   [RUNTIME_INSTALL_ABORT]: string;
   [RUNTIME_INSTALL_STATUS]: undefined;
+  [RUNTIME_CONFIG_EXPORT]: RuntimeConfigExportRequest;
+  [RUNTIME_CONFIG_IMPORT]: RuntimeConfigImportRequest;
 
   [UTIL_OPEN_PATH]: string;
   [UTIL_SELECT_DIRECTORY]: string | undefined;
@@ -84,6 +89,8 @@ export type ElectronInvokeResponseMap = {
   [EXPLORE_LIST]: IpcResponse<{ apps: any[] }>;
   [EXPLORE_DETAIL]: IpcResponse<{ app: any }>;
   [EXPLORE_INSTALL]: IpcResponse<Application>;
+  [EXPLORE_EXPORT]: IpcResponse<ExploreExportResult>;
+  [EXPLORE_IMPORT]: IpcResponse<ExploreImportResult>;
 
   [SYSTEM_INFO]: IpcResponse<SystemInfoResponse>;
 
@@ -96,6 +103,8 @@ export type ElectronInvokeResponseMap = {
   [RUNTIME_ENGINE_STOP]: IpcResponse<RuntimeEngineStatus>;
   [RUNTIME_INSTALL_ABORT]: IpcResponse<undefined>;
   [RUNTIME_INSTALL_STATUS]: IpcResponse<{ statuses: RuntimeInstallStatusEvent[] }>;
+  [RUNTIME_CONFIG_EXPORT]: IpcResponse<RuntimeConfigExportResult>;
+  [RUNTIME_CONFIG_IMPORT]: IpcResponse<RuntimeConfigImportResult>;
 
   [UTIL_OPEN_PATH]: IpcResponse<undefined>;
   [UTIL_SELECT_DIRECTORY]: IpcResponse<{ path: string }>;

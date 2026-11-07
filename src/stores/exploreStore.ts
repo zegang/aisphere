@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { EXPLORE_LIST, EXPLORE_INSTALL  } from '@/shared/channel-types';
 import { Application } from '@/types/api';
+import { useWorkspaceStore } from './workspaceStore';
 
 interface ExploreState {
   applications: Application[];
@@ -8,6 +9,7 @@ interface ExploreState {
   installingId: string | null;
   selectedAppId: string | null;
   search: string;
+  selectedKind: string;
   selectedCategory: string;
   selectedType: string;
   selectedPlatform: string;
@@ -16,6 +18,7 @@ interface ExploreState {
   // Actions
   loadApplications: () => Promise<void>;
   setSearch: (search: string) => void;
+  setKind: (kind: string) => void;
   setCategory: (category: string) => void;
   setType: (type: string) => void;
   setPlatform: (platform: string) => void;
@@ -31,6 +34,7 @@ export const useExploreStore = create<ExploreState>((set) => ({
   installingId: null,
   selectedAppId: null,
   search: '',
+  selectedKind: 'All',
   selectedCategory: 'All',
   selectedType: 'All',
   selectedPlatform: 'All',
@@ -52,11 +56,12 @@ export const useExploreStore = create<ExploreState>((set) => ({
   },
 
   setSearch: (search) => set({ search }),
+  setKind: (selectedKind) => set({ selectedKind }),
   setCategory: (selectedCategory) => set({ selectedCategory }),
   setType: (selectedType) => set({ selectedType }),
   setPlatform: (selectedPlatform) => set({ selectedPlatform }),
   setRuntime: (selectedRuntime) => set({ selectedRuntime }),
-  clearFilters: () => set({ search: '', selectedCategory: 'All', selectedType: 'All', selectedPlatform: 'All', selectedRuntime: 'All' }),
+  clearFilters: () => set({ search: '', selectedKind: 'All', selectedCategory: 'All', selectedType: 'All', selectedPlatform: 'All', selectedRuntime: 'All' }),
 
   installApplication: async (app) => {
     set({ installingId: app.id });
@@ -70,6 +75,10 @@ export const useExploreStore = create<ExploreState>((set) => ({
             a.id === app.id ? { ...a, ...result.data } : a
           ),
         }));
+        // Ingest the installed components (MCP servers, skills, agents,
+        // hooks, instructions…) into the workspace registry so every
+        // workspace can immediately use what the new app provides.
+        useWorkspaceStore.getState().registerAppComponents(result.data as Application);
         console.log(`Installation for ${app.name} initiated successfully.`);
       } else {
         set({ installingId: null });

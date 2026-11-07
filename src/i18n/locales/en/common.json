@@ -83,6 +83,53 @@
     },
     "message": {
       "no_apps": "No applications found matching your criteria."
+    },
+    "kinds": {
+      "all": "All",
+      "app": "App",
+      "engine": "LLM Engines",
+      "webui": "Web UI",
+      "agent": "Agents",
+      "skill": "Skills",
+      "tool": "Tools",
+      "instructions": "Instructions",
+      "mcp": "MCP Server",
+      "hook": "Hooks"
+    },
+    "export": {
+      "button": "Export",
+      "title": "Export app specs",
+      "layout": "Layout",
+      "mode_single": "One combined file",
+      "mode_single_desc": "All app specs are saved into a single JSON file.",
+      "mode_folder": "One file per app",
+      "mode_folder_desc": "Creates a new folder containing one JSON file per app spec.",
+      "mode_zip": "Per-app files, zipped",
+      "mode_zip_desc": "Same as a folder, but packaged as a single .zip archive.",
+      "scope": "Scope",
+      "scope_all": "All apps ({{count}})",
+      "scope_filtered": "Current filter ({{count}})",
+      "timestamp_note": "Exported file and folder names include the export time.",
+      "confirm": "Export",
+      "cancel": "Cancel",
+      "exporting": "Exporting…",
+      "done": "Exported {{count}} app specs.",
+      "failed": "Export failed.",
+      "close": "Close"
+    },
+    "import": {
+      "button": "Import",
+      "title": "Import app specs",
+      "hint": "Pick app spec files, a folder of them, or a .zip archive. Apps that already exist in the catalog are skipped.",
+      "files": "Select files",
+      "files_desc": "A single .json, a combined catalog file, multiple files, or a .zip archive.",
+      "folder": "Select folder",
+      "folder_desc": "Reads every .json file in the chosen folder.",
+      "done": "Imported {{imported}}, skipped {{skipped}}.",
+      "skipped_list": "Skipped: {{names}}",
+      "nothing_new": "Everything selected already exists in the catalog.",
+      "failed": "Import failed.",
+      "close": "Close"
     }
   },
   "runtimes": {
@@ -245,7 +292,8 @@
     "action": {
       "view": "View",
       "web_ui": "Web UI",
-      "open_url": "Open {{url}}"
+      "open_url": "Open {{url}}",
+      "in_workspace": "In workspace"
     },
     "status": {
       "stopped": "stopped",
@@ -310,7 +358,6 @@
     "switch_dark": "Switch to dark mode"
   },
   "sidebar": {
-    "note": "Note",
     "workspace": "Workspace",
     "home": "Home",
     "runtimes": "Runtimes",
@@ -370,7 +417,7 @@
     "cancel": "Cancel",
     "start_launch": "Start & Launch"
   },
-  "notes": {
+  "workspace": {
     "sources": "Sources",
     "search_sources": "Search sources...",
     "studio": "Studio",
@@ -384,11 +431,26 @@
     "architecture_body": "The roadmap suggests moving towards a decentralized container registry...",
     "create_note": "Create new saved response or note",
     "generate_report": "Generate Report",
-    "ask_placeholder": "Ask anything about your sources...",
+    "ask_placeholder": "Ask your workspace agent anything...",
     "disclaimer": "AI can make mistakes. Consider checking important information.",
     "initial_message": "Hello! I have analyzed your sources. How can I help you today?",
-    "mock_response": "As {{model}}, I'm processing your request based on the uploaded sources...",
+    "agent_via": "Agent {{agent}}",
+    "skills_via": "Skills: {{skills}}",
+    "tools_via": "Tools ({{count}}): {{tools}}",
     "read_aloud": "Read aloud",
+    "agent_picker": "Choose the agent running this chat",
+    "agent_meta": "{{skills}} skills · {{tools}} tools",
+    "no_agent": "No agent (chat directly)",
+    "mock_response": "{{agent}}\nAnswering with {{model}}.\n{{skills}}{{tools}}I am processing your request with the attached workspace context...",
+    "tab_agents": "Agents",
+    "tab_skills": "Skills",
+    "tab_mcp": "MCP",
+    "tab_studio": "Studio",
+    "tools": {
+      "title": "MCP Tools",
+      "clear": "Clear",
+      "empty": "No running MCP servers. Enable a server in the MCP tab."
+    },
     "models": {
       "title": "Local models",
       "count": "{{count}} detected",
@@ -396,6 +458,126 @@
       "empty": "No local GGUF models detected. Install a model app from Explore, then refresh.",
       "refresh": "Refresh model list",
       "app": "From {{app}}"
+    },
+    "agents": {
+      "count": "{{count}} agents in your workspace",
+      "new": "New Agent",
+      "new_title": "Create agent",
+      "edit_title": "Edit {{name}}",
+      "edit": "Edit agent",
+      "delete": "Delete agent",
+      "delete_confirm": "Delete agent \"{{name}}\"?",
+      "create": "Create agent",
+      "save": "Save changes",
+      "cancel": "Cancel",
+      "builtin": "Built-in",
+      "active_chat": "Active in chat",
+      "set_active": "Use in chat",
+      "default_model": "Default model",
+      "skills_count": "{{count}} skills",
+      "tools_count": "{{count}} tools",
+      "no_tools": "No running MCP servers. Enable one in the MCP tab to attach tools.",
+      "field_emoji": "Icon",
+      "field_name": "Agent name",
+      "field_description": "Short description of what this agent does",
+      "field_instructions": "Custom instructions (system prompt)",
+      "field_model": "Model",
+      "field_skills": "Skills",
+      "field_tools": "MCP tools"
+    },
+    "skills": {
+      "count": "{{count}} skills in your workspace",
+      "new": "New Skill",
+      "new_title": "Create skill",
+      "search": "Search skills...",
+      "create": "Create skill",
+      "toggle": "Toggle {{name}}",
+      "delete": "Delete skill",
+      "no_description": "No description provided.",
+      "empty_search": "No skills match your search.",
+      "field_name": "Skill name",
+      "field_description": "Short description",
+      "field_instructions": "Instructions the model receives when the skill is active",
+      "source": {
+        "builtin": "Built-in",
+        "custom": "Custom",
+        "local": "Local"
+      }
+    },
+    "mcp": {
+      "count": "{{count}} MCP servers",
+      "new": "Add Server",
+      "new_title": "Add MCP server",
+      "no_description": "No description provided.",
+      "toggle": "Toggle {{name}}",
+      "delete": "Delete server",
+      "delete_confirm": "Remove MCP server \"{{name}}\" and its tools?",
+      "status": {
+        "running": "Running",
+        "connecting": "Connecting",
+        "stopped": "Stopped",
+        "error": "Error"
+      },
+      "tools_count": "{{count}}/{{total}} tools available",
+      "field_name": "Server name",
+      "field_description": "Short description",
+      "field_transport": "Transport",
+      "field_command": "Command (e.g. npx / uvx)",
+      "field_args": "Arguments (space separated)",
+      "enable_now": "Enable and connect now",
+      "cancel": "Cancel",
+      "create": "Add",
+      "providers_tools": "{{count}} tools will be available in the workspace."
+    },
+    "workspaces": {
+      "title": "Workspaces",
+      "new": "New workspace",
+      "rename": "Rename workspace",
+      "delete": "Delete workspace",
+      "delete_confirm": "Delete workspace \"{{name}}\" and its chat?",
+      "untitled": "Workspace {{n}}"
+    },
+    "instructions": {
+      "title": "Instructions (AGENTS.md)",
+      "toggle": "Toggle instruction pack {{name}}"
+    },
+    "hooks": {
+      "title": "Hooks",
+      "toggle": "Toggle hook {{name}}",
+      "event": {
+        "session-start": "Session start",
+        "message-send": "Message send",
+        "assistant-reply": "Assistant reply",
+        "tool-call": "Tool call"
+      }
+    },
+    "web": {
+      "title": "Web apps",
+      "open": "Open"
+    },
+    "instructions_applied": "Instructions: {{names}}.",
+    "hooks_applied": "Hooks: {{names}}.",
+    "engines": {
+      "status_running": "Running",
+      "status_stopped": "Stopped",
+      "status_starting": "Starting…",
+      "status_stopping": "Stopping…",
+      "status_failed": "Failed",
+      "status_unknown": "Unknown",
+      "needs_start": "Selecting a model from a stopped engine will offer to start it.",
+      "start_title": "Start engine?",
+      "start_question": "The \"{{engine}}\" engine is not running. Start it so the selected model can answer?",
+      "start_button": "Start engine",
+      "cancel": "Cancel",
+      "starting": "Starting {{engine}}… this can take a moment.",
+      "runtime_needed": "The {{engine}} engine needs its container runtime first. Please confirm the runtime prompt above.",
+      "started": "{{engine}} is running. The model is ready.",
+      "start_failed": "Engine failed to start.",
+      "retry": "Retry",
+      "close": "Close",
+      "background": "Run in background",
+      "use_model": "Use model",
+      "timeout": "Timed out waiting for the engine to start."
     }
   }
 }

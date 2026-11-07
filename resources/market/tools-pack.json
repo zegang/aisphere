@@ -1,0 +1,10 @@
+{
+  "name": "Workspace Tools Pack",
+  "kind": "tool",
+  "transport": "local",
+  "tools": [
+    { "name": "note_search", "description": "Search saved notes in the current workspace" },
+    { "name": "outline_builder", "description": "Build a Markdown outline from a set of notes" },
+    { "name": "export_md", "description": "Export chat or notes to a Markdown file" }
+  ]
+}

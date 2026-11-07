@@ -1,7 +1,7 @@
 // Sidebar component
 
 import { useState } from 'react';
-import { NotebookPen, Box, Home, AppWindow, Search, Settings, User, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Layers, Box, Home, AppWindow, Search, Settings, User, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useAiSphereStore, AiSphereView } from '@/stores/aiSphereStore';
 
@@ -12,7 +12,7 @@ export function Sidebar() {
   const [expanded, setExpanded] = useState(true);
 
   const navItems: Array<{ icon: any; label: string; view: AiSphereView }> = [
-    { icon: NotebookPen, label: t('sidebar.note'), view: 'note' },
+    { icon: Layers, label: t('sidebar.workspace'), view: 'workspace' },
     { icon: Home, label: t('sidebar.home'), view: 'home' },
     { icon: AppWindow, label: t('sidebar.apps'), view: 'apps' },
     { icon: Search, label: t('sidebar.explore'), view: 'explore' },

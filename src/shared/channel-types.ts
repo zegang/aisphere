@@ -34,6 +34,9 @@ export const RUNTIME_INSTALL_RESIZE = 'runtime:install:resize' as const;
 /** Returns the last known installation status for every runtime type. */
 export const RUNTIME_INSTALL_STATUS = 'runtime:install:status' as const;
 
+export const RUNTIME_CONFIG_EXPORT = 'runtime:config:export' as const;
+export const RUNTIME_CONFIG_IMPORT = 'runtime:config:import' as const;
+
 export type RuntimeKind = 'docker' | 'podman' | 'apptainer' | 'conda';
 export type RuntimeInstallState = 'starting' | 'downloading' | 'installing' | 'completed' | 'failed' | 'aborted';
 
@@ -106,6 +109,67 @@ export const UTIL_SELECT_DIRECTORY = 'util:selectDirectory' as const;
 export const EXPLORE_LIST = 'explore:list' as const;
 export const EXPLORE_DETAIL = 'explore:detail' as const;
 export const EXPLORE_INSTALL = 'explore:install' as const;
+export const EXPLORE_EXPORT = 'explore:export' as const;
+export const EXPLORE_IMPORT = 'explore:import' as const;
+
+/** Export payload: catalog app specs to save. `targetPath` bypasses the native save/folder dialog (automation). */
+export interface ExploreExportRequest {
+  mode: 'single' | 'folder' | 'zip';
+  apps: unknown[];
+  targetPath?: string;
+}
+
+/** Import payload: `source` picks the native dialog mode; explicit `paths` bypass it (automation). */
+export interface ExploreImportRequest {
+  source: 'file' | 'folder';
+  paths?: string[];
+}
+
+export interface ExploreExportResult {
+  kind: 'file' | 'folder' | 'zip';
+  path: string;
+  count: number;
+}
+
+export interface ExploreImportResult {
+  imported: Array<{ id: string; name: string }>;
+  skipped: Array<{ id: string; name: string; reason?: string }>;
+}
+
+/**
+ * One runtime configuration record (runtime 配置). `autoStart` is the
+ * remembered preference from the runtime prompt ('always' | 'never'), or null
+ * when never chosen; the remaining fields are informational snapshots taken
+ * at export time and are not replayed on import.
+ */
+export interface RuntimeConfigSpec {
+  type: RuntimeKind;
+  name: string;
+  hasEngine: boolean;
+  autoStart: 'always' | 'never' | null;
+  installed: boolean;
+  managed: boolean;
+  version?: string;
+}
+
+export interface RuntimeConfigExportRequest {
+  mode: 'single' | 'folder' | 'zip';
+  /** Bypasses the native save/folder dialog (automation). */
+  targetPath?: string;
+}
+
+export type RuntimeConfigExportResult = ExploreExportResult;
+
+export interface RuntimeConfigImportRequest {
+  source: 'file' | 'folder';
+  /** Explicit spec paths (files, a folder or a .zip) bypass the native dialog. */
+  paths?: string[];
+}
+
+export interface RuntimeConfigImportResult {
+  imported: Array<{ type: string; name: string; autoStart: string | null }>;
+  skipped: Array<{ type: string; reason?: string }>;
+}
 
 // Generic response/error wrapper
 export interface IpcResponse<T> {
@@ -129,13 +193,16 @@ export type SystemChannel =
   | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_UNINSTALL
   | typeof RUNTIME_DETAIL | typeof RUNTIME_ENGINE_STATUS | typeof RUNTIME_ENGINE_START | typeof RUNTIME_ENGINE_STOP
   | typeof RUNTIME_INSTALL_ABORT | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE
-  | typeof RUNTIME_INSTALL_STATUS;
+  | typeof RUNTIME_INSTALL_STATUS
+  | typeof RUNTIME_CONFIG_EXPORT | typeof RUNTIME_CONFIG_IMPORT;
 
 export type LogChannel = typeof LOG_SEND;
 
 export type UtilChannel = typeof UTIL_OPEN_PATH | typeof UTIL_SELECT_DIRECTORY;
 
-export type ExploreChannel = typeof EXPLORE_LIST | typeof EXPLORE_DETAIL | typeof EXPLORE_INSTALL;
+export type ExploreChannel =
+  | typeof EXPLORE_LIST | typeof EXPLORE_DETAIL | typeof EXPLORE_INSTALL
+  | typeof EXPLORE_EXPORT | typeof EXPLORE_IMPORT;
 
 export type AllChannels =
   | LogChannel | SettingChannel | AppChannel | ExploreChannel | UtilChannel;

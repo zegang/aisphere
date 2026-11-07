@@ -170,6 +170,16 @@ export class Package {
         event.sender.send(`app:install:log:${app.id}`,
           afterDownloadResult.success ? `Installation complete!` : `Installation failed: ${afterDownloadResult.error}`);
       }
+      // Mark the installation complete. Docker-based apps flip this in
+      // RuntimeService only after the container image has been pulled; every
+      // other kind (components, native apps) is fully installed once its
+      // packages are downloaded and the post-install scripts have run.
+      if (afterDownloadResult.success && app.runtime?.runtime !== 'docker') {
+        app.install = {
+          ...app.install,
+          installed: true,
+        } as Application['install'];
+      }
       // Return the mutated application so the renderer can update the card's
       // installed state immediately instead of showing "Install" again.
       return afterDownloadResult.success
