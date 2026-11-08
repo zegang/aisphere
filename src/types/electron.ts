@@ -1,24 +1,31 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, APP_SHUTDOWN_PROGRESS, AppInstallControlRequest, AppInstallControlResult, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
+  TERMINAL_INIT, TERMINAL_LOGS, TERMINAL_INPUT, TERMINAL_RESIZE, TERMINAL_CLOSE,
   SETTING_LIST,
   SETTING_GET,
   SETTING_UPDATE,
   SETTING_DELETE,
   AllChannels,
-  EXPLORE_DETAIL, EXPLORE_INSTALL, EXPLORE_LIST, EXPLORE_EXPORT, EXPLORE_IMPORT,
+  EXPLORE_DETAIL, EXPLORE_INSTALL, EXPLORE_INSTALL_CONTROL, EXPLORE_LIST, EXPLORE_EXPORT, EXPLORE_IMPORT,
   ExploreExportRequest, ExploreExportResult, ExploreImportRequest, ExploreImportResult,
   SYSTEM_INFO,
   UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY,
+  LAN_NAS_STATUS, LAN_NAS_START, LAN_NAS_STOP,
+  LanNasStartRequest, LanNasStartResult, LanNasStatus,
 } from '@/shared/channel-types';
 import type {
   AppCreateRequest,
   AppUpdateRequest,
+  AppStartResult,
+  AppStopResult,
   AppDetailResponse,
   AppListResponse,
   SettingsListResponse,
   SettingsUpdateRequest,
   Application,
+  AppDeleteResult,
+  LifecycleActionRun,
   SystemInfoResponse,
 } from './api';
 
@@ -29,9 +36,11 @@ export type ElectronInvokePayloadMap = {
   [APP_START]: string;
   [APP_STOP]: string;
   [APP_DELETE]: string;
-  ['terminal:init']: string;
-  ['terminal:input']: { id: string; data: string };
-  ['terminal:resize']: { id: string; cols: number; rows: number };
+  [TERMINAL_INIT]: string;
+  [TERMINAL_LOGS]: string;
+  [TERMINAL_INPUT]: { id: string; data: string };
+  [TERMINAL_RESIZE]: { id: string; cols: number; rows: number };
+  [TERMINAL_CLOSE]: string;
   [APP_OPEN_INTERACTIVE_SHELL]: string;
   [APP_STATUS]: string;
   [APP_INSPECT]: string;
@@ -45,6 +54,7 @@ export type ElectronInvokePayloadMap = {
   [EXPLORE_LIST]: undefined;
   [EXPLORE_DETAIL]: string;
   [EXPLORE_INSTALL]: Application;
+  [EXPLORE_INSTALL_CONTROL]: AppInstallControlRequest;
   [EXPLORE_EXPORT]: ExploreExportRequest;
   [EXPLORE_IMPORT]: ExploreImportRequest;
 
@@ -66,18 +76,24 @@ export type ElectronInvokePayloadMap = {
 
   [UTIL_OPEN_PATH]: string;
   [UTIL_SELECT_DIRECTORY]: string | undefined;
+
+  [LAN_NAS_STATUS]: undefined;
+  [LAN_NAS_START]: LanNasStartRequest;
+  [LAN_NAS_STOP]: undefined;
 };
 
 export type ElectronInvokeResponseMap = {
   [APP_LIST]: IpcResponse<AppListResponse>;
   [APP_DETAIL]: IpcResponse<AppDetailResponse>;
   [APP_CREATE]: IpcResponse<{ id: string }>;
-  [APP_START]: IpcResponse<undefined>;
-  [APP_STOP]: IpcResponse<undefined>;
-  [APP_DELETE]: IpcResponse<undefined>;
-  ['terminal:init']: IpcResponse<undefined>;
-  ['terminal:input']: IpcResponse<undefined>;
-  ['terminal:resize']: IpcResponse<undefined>;
+  [APP_START]: IpcResponse<AppStartResult>;
+  [APP_STOP]: IpcResponse<AppStopResult>;
+  [APP_DELETE]: IpcResponse<AppDeleteResult>;
+  [TERMINAL_INIT]: IpcResponse<undefined>;
+  [TERMINAL_LOGS]: IpcResponse<undefined>;
+  [TERMINAL_INPUT]: IpcResponse<undefined>;
+  [TERMINAL_RESIZE]: IpcResponse<undefined>;
+  [TERMINAL_CLOSE]: IpcResponse<undefined>;
   [APP_OPEN_INTERACTIVE_SHELL]: IpcResponse<undefined>;
   [APP_STATUS]: IpcResponse<{ status: string }>;
   [APP_INSPECT]: IpcResponse<any>;
@@ -91,18 +107,19 @@ export type ElectronInvokeResponseMap = {
   [EXPLORE_LIST]: IpcResponse<{ apps: any[] }>;
   [EXPLORE_DETAIL]: IpcResponse<{ app: any }>;
   [EXPLORE_INSTALL]: IpcResponse<Application>;
+  [EXPLORE_INSTALL_CONTROL]: IpcResponse<AppInstallControlResult>;
   [EXPLORE_EXPORT]: IpcResponse<ExploreExportResult>;
   [EXPLORE_IMPORT]: IpcResponse<ExploreImportResult>;
 
   [SYSTEM_INFO]: IpcResponse<SystemInfoResponse>;
 
   [RUNTIME_CHECK]: IpcResponse<{ runtimes: { type: string; installed: boolean; managed?: boolean; version?: string }[] }>;
-  [RUNTIME_INSTALL]: IpcResponse<undefined>;
-  [RUNTIME_UNINSTALL]: IpcResponse<undefined>;
+  [RUNTIME_INSTALL]: IpcResponse<{ lifecycleRuns?: LifecycleActionRun[] }>;
+  [RUNTIME_UNINSTALL]: IpcResponse<{ lifecycleRuns?: LifecycleActionRun[] }>;
   [RUNTIME_DETAIL]: IpcResponse<RuntimeDetail>;
   [RUNTIME_ENGINE_STATUS]: IpcResponse<RuntimeEngineStatus>;
   [RUNTIME_ENGINE_START]: IpcResponse<RuntimeEngineStatus>;
-  [RUNTIME_ENGINE_STOP]: IpcResponse<RuntimeEngineStatus>;
+  [RUNTIME_ENGINE_STOP]: IpcResponse<RuntimeEngineStatus & { lifecycleRuns?: LifecycleActionRun[] }>;
   [RUNTIME_INSTALL_ABORT]: IpcResponse<undefined>;
   [RUNTIME_INSTALL_STATUS]: IpcResponse<{ statuses: RuntimeInstallStatusEvent[] }>;
   [RUNTIME_CONFIG_EXPORT]: IpcResponse<RuntimeConfigExportResult>;
@@ -112,6 +129,10 @@ export type ElectronInvokeResponseMap = {
 
   [UTIL_OPEN_PATH]: IpcResponse<undefined>;
   [UTIL_SELECT_DIRECTORY]: IpcResponse<{ path: string }>;
+
+  [LAN_NAS_STATUS]: IpcResponse<LanNasStatus>;
+  [LAN_NAS_START]: IpcResponse<LanNasStartResult>;
+  [LAN_NAS_STOP]: IpcResponse<undefined>;
 };
 
 export interface ElectronAPI {

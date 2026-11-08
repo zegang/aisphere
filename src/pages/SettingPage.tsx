@@ -20,6 +20,10 @@ export default function SettingsPage() {
   const { t } = useTranslation();
   const [rootDirError, setRootDirError] = useState<string | null>(null);
   const [autoStart, setAutoStart] = useState<Record<string, string>>({});
+  const [runtimeAutoInstall, setRuntimeAutoInstall] = useState<'ask' | 'always' | 'never'>('ask');
+  const [runtimeAutoInstallError, setRuntimeAutoInstallError] = useState<string | null>(null);
+  const [shutdownBehavior, setShutdownBehavior] = useState<'ask' | 'always' | 'never'>('always');
+  const [shutdownSettingError, setShutdownSettingError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -43,9 +47,89 @@ export default function SettingsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    const load = async () => {
+      try {
+        const result = await window.electron.invoke(SETTING_GET, SettingKey.RuntimeAutoInstall);
+        if (!result.success) throw new Error(result.error ?? t('settings.runtime_autoinstall_failed'));
+        const value = result.data?.value;
+        if (!disposed) setRuntimeAutoInstall(value === 'always' || value === 'never' ? value : 'ask');
+      } catch (error) {
+        console.error('Failed to load runtime auto-install preference:', error);
+        if (!disposed) setRuntimeAutoInstallError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    load();
+    return () => {
+      disposed = true;
+    };
+  }, [t]);
+
+  useEffect(() => {
+    let disposed = false;
+    const load = async () => {
+      try {
+        const result = await window.electron.invoke(SETTING_GET, SettingKey.StopRuntimesOnExit);
+        if (!result.success) throw new Error(result.error ?? t('settings.shutdown_setting_failed'));
+        const savedValue = result.data?.value;
+        const value = savedValue === 'ask' || savedValue === 'never' || savedValue === 'false'
+          ? savedValue === 'false' ? 'never' : savedValue
+          : 'always';
+        if (!disposed) setShutdownBehavior(value);
+        if (savedValue === 'true' || savedValue === 'false') {
+          const migratedValue = savedValue === 'true' ? 'always' : 'never';
+          const update = await window.electron.invoke(SETTING_UPDATE, {
+            key: SettingKey.StopRuntimesOnExit,
+            value: migratedValue,
+          });
+          if (!update.success) throw new Error(update.error ?? t('settings.shutdown_setting_failed'));
+        }
+      } catch (error) {
+        console.error('Failed to load runtime shutdown setting:', error);
+        if (!disposed) setShutdownSettingError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    load();
+    return () => {
+      disposed = true;
+    };
+  }, [t]);
+
+  const updateShutdownBehavior = async (value: 'ask' | 'always' | 'never') => {
+    const previous = shutdownBehavior;
+    setShutdownBehavior(value);
+    setShutdownSettingError(null);
+    try {
+      const result = await window.electron.invoke(SETTING_UPDATE, {
+        key: SettingKey.StopRuntimesOnExit,
+        value,
+      });
+      if (!result.success) throw new Error(result.error ?? t('settings.shutdown_setting_failed'));
+    } catch (error) {
+      console.error('Failed to save runtime shutdown setting:', error);
+      setShutdownBehavior(previous);
+      setShutdownSettingError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   const updateAutoStart = async (runtime: string, value: string) => {
     setAutoStart((prev) => ({ ...prev, [runtime]: value }));
     await window.electron.invoke(SETTING_UPDATE, { key: runtimeAutoStartKey(runtime), value });
+  };
+
+  const updateRuntimeAutoInstall = async (value: 'ask' | 'always' | 'never') => {
+    const previous = runtimeAutoInstall;
+    setRuntimeAutoInstall(value);
+    setRuntimeAutoInstallError(null);
+    try {
+      const result = await window.electron.invoke(SETTING_UPDATE, { key: SettingKey.RuntimeAutoInstall, value });
+      if (!result.success) throw new Error(result.error ?? t('settings.runtime_autoinstall_failed'));
+    } catch (error) {
+      console.error('Failed to save runtime auto-install preference:', error);
+      setRuntimeAutoInstall(previous);
+      setRuntimeAutoInstallError(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const browseRootDirectory = async () => {
@@ -150,6 +234,52 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="pt-4 border-t border-light-border dark:border-dark-border">
+          <label htmlFor="runtime-auto-install" className="block text-sm font-medium mb-1">
+            {t('settings.runtime_autoinstall')}
+          </label>
+          <p id="runtime-auto-install-hint" className="text-xs text-light-subtle dark:text-dark-subtle mb-3">
+            {t('settings.runtime_autoinstall_hint')}
+          </p>
+          <select
+            id="runtime-auto-install"
+            value={runtimeAutoInstall}
+            onChange={(event) => updateRuntimeAutoInstall(event.target.value as 'ask' | 'always' | 'never')}
+            aria-describedby="runtime-auto-install-hint"
+            className="bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded px-3 py-1.5 text-sm"
+          >
+            <option value="ask">{t('settings.runtime_ask')}</option>
+            <option value="always">{t('settings.runtime_install_always')}</option>
+            <option value="never">{t('settings.runtime_install_never')}</option>
+          </select>
+          {runtimeAutoInstallError && (
+            <p role="alert" className="mt-2 text-sm text-red-500">{runtimeAutoInstallError}</p>
+          )}
+        </div>
+
+        <div className="pt-4 border-t border-light-border dark:border-dark-border">
+          <label htmlFor="shutdown-behavior" className="block text-sm font-medium mb-1">
+            {t('settings.stop_runtimes_on_exit')}
+          </label>
+          <p id="shutdown-behavior-hint" className="text-xs text-light-subtle dark:text-dark-subtle mb-3">
+            {t('settings.stop_runtimes_on_exit_hint')}
+          </p>
+          <select
+            id="shutdown-behavior"
+            value={shutdownBehavior}
+            onChange={(event) => updateShutdownBehavior(event.target.value as 'ask' | 'always' | 'never')}
+            aria-describedby="shutdown-behavior-hint"
+            className="bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded px-3 py-1.5 text-sm"
+          >
+            <option value="ask">{t('settings.shutdown_ask')}</option>
+            <option value="always">{t('settings.shutdown_always')}</option>
+            <option value="never">{t('settings.shutdown_never')}</option>
+          </select>
+          {shutdownSettingError && (
+            <p role="alert" className="mt-2 text-sm text-red-500">{shutdownSettingError}</p>
+          )}
         </div>
       </div>
     </div>

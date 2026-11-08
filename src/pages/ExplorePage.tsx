@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, AppWindow, Search, X, RefreshCw, Upload, FileJson, FolderOpen, FileArchive, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react';
+import { Download, AppWindow, Search, X, RefreshCw, Upload, FileJson, FolderOpen, FileArchive, CheckCircle2, AlertTriangle, Loader2, CheckSquare } from 'lucide-react';
 import { useExploreStore } from '../stores/exploreStore';
 import { useAiSphereStore } from '../stores/aiSphereStore';
 import { useTranslation } from '@/i18n';
 import { EXPLORE_EXPORT, EXPLORE_IMPORT } from '@/shared/channel-types';
 import type { ExploreExportResult, ExploreImportResult } from '@/shared/channel-types';
+import { AppInstallControls } from '@/components/AppInstallControls';
+import type { AppInstallStatus } from '@/shared/channel-types';
 
 export default function ExplorePage() {
   const { t } = useTranslation();
@@ -14,6 +16,9 @@ export default function ExplorePage() {
     applications,
     loading,
     installingId,
+    installProgress,
+    installLogs,
+    installErrors,
     search,
     selectedKind,
     selectedCategory,
@@ -29,6 +34,13 @@ export default function ExplorePage() {
     installApplication,
     setSelectedAppId,
   } = useExploreStore();
+  const setInstallStatus = (app: (typeof applications)[number], status: AppInstallStatus) => {
+    useExploreStore.setState((state) => ({
+      applications: state.applications.map((item) =>
+        item.id === app.id ? { ...item, install: { ...item.install, installed: false, status } } : item
+      ),
+    }));
+  };
 
   useEffect(() => {
     loadApplications();
@@ -76,6 +88,65 @@ export default function ExplorePage() {
   const [importBusy, setImportBusy] = useState<'file' | 'folder' | null>(null);
   const [importResult, setImportResult] = useState<ExploreImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [selectedAppIds, setSelectedAppIds] = useState<string[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [batchInstalling, setBatchInstalling] = useState(false);
+  const [batchInstallError, setBatchInstallError] = useState<string | null>(null);
+
+  const selectableApplications = applications.filter((app) =>
+    !app.install?.installed && !['installing', 'paused', 'aborting'].includes(app.install?.status ?? '')
+  );
+  const visibleSelectableApplications = filteredApplications.filter((app) =>
+    !app.install?.installed && !['installing', 'paused', 'aborting'].includes(app.install?.status ?? '')
+  );
+  const selectedInstallableIds = selectedAppIds.filter((id) =>
+    selectableApplications.some((app) => app.id === id)
+  );
+
+  const selectVisibleApplications = () => {
+    setSelectedAppIds((current) => {
+      const visibleIds = visibleSelectableApplications.map((app) => app.id);
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !visibleIds.includes(id))
+        : [...new Set([...current, ...visibleIds])];
+    });
+  };
+
+  const toggleAppSelection = (appId: string) => {
+    setSelectedAppIds((current) =>
+      current.includes(appId)
+        ? current.filter((id) => id !== appId)
+        : [...current, appId]
+    );
+  };
+
+  const handleAppCardClick = (app: (typeof applications)[number]) => {
+    if (selectionMode && !app.install?.installed) {
+      toggleAppSelection(app.id);
+      return;
+    }
+    setSelectedAppId(app.id);
+    setView('exploredetail');
+  };
+
+  const installSelectedApplications = async () => {
+    setBatchInstalling(true);
+    setBatchInstallError(null);
+    try {
+      for (const app of selectableApplications.filter((item) => selectedInstallableIds.includes(item.id))) {
+        const installed = await installApplication(app);
+        if (!installed) break;
+        if (useExploreStore.getState().applications.find((item) => item.id === app.id)?.install?.installed) {
+          setSelectedAppIds((current) => current.filter((id) => id !== app.id));
+        }
+      }
+    } catch (error) {
+      setBatchInstallError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBatchInstalling(false);
+    }
+  };
 
   const openExportDialog = () => {
     setExportMode('single');
@@ -129,6 +200,9 @@ export default function ExplorePage() {
       <div className="flex justify-between items-center mb-4 shrink-0">
         <h2 className="text-2xl font-bold flex items-center gap-2">
           <AppWindow className="w-6 h-6" /> {t('explore.title')}
+          <span aria-live="polite" className="ml-1 inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-300">
+            {t('explore.count', { visible: filteredApplications.length, total: applications.length })}
+          </span>
         </h2>
         <div className="flex items-center gap-2">
           <button
@@ -213,6 +287,69 @@ export default function ExplorePage() {
         )}
       </div>
 
+      {!loading && selectableApplications.length > 0 && (
+        <div className={`flex flex-wrap items-center gap-2.5 mb-4 shrink-0 rounded-xl border px-3 py-2 transition-colors ${
+          selectionMode
+            ? 'animate-in fade-in slide-in-from-top-1 duration-200 border-blue-200 bg-blue-50/80 dark:border-blue-900/60 dark:bg-blue-950/20'
+            : 'border-transparent'
+        }`}>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectionMode((active) => !active);
+              setSelectedAppIds([]);
+              setBatchInstallError(null);
+            }}
+            disabled={batchInstalling || !!installingId}
+            className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+              selectionMode
+                ? 'bg-light-surface text-light-text shadow-sm dark:bg-dark-surface dark:text-dark-text'
+                : 'text-light-subtle hover:bg-light-muted hover:text-light-text dark:text-dark-subtle dark:hover:bg-dark-muted dark:hover:text-dark-text'
+            }`}
+          >
+            <CheckSquare className="h-4 w-4" />
+            {selectionMode ? t('explore.batch.done_selecting') : t('explore.batch.select_mode')}
+          </button>
+          {selectionMode && (
+            <>
+              <span className="h-5 w-px bg-light-border dark:bg-dark-border" />
+              <button
+                type="button"
+                onClick={selectVisibleApplications}
+                disabled={visibleSelectableApplications.length === 0 || batchInstalling || !!installingId}
+                className="rounded-lg px-3 py-2 text-sm text-light-subtle transition-colors hover:bg-light-surface hover:text-light-text disabled:opacity-50 dark:text-dark-subtle dark:hover:bg-dark-surface dark:hover:text-dark-text"
+              >
+                {t('explore.batch.select_visible')}
+              </button>
+              {selectedInstallableIds.length > 0 && (
+                <>
+                  <span className="text-sm">{t('explore.batch.selected', { count: selectedInstallableIds.length })}</span>
+                  <button
+                    type="button"
+                    onClick={installSelectedApplications}
+                    disabled={batchInstalling || !!installingId}
+                    className="px-3 py-1.5 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {batchInstalling || installingId
+                      ? t('explore.batch.installing')
+                      : t('explore.batch.install_selected', { count: selectedInstallableIds.length })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAppIds([])}
+                    disabled={batchInstalling || !!installingId}
+                    className="px-3 py-1.5 text-sm rounded-lg border border-light-border dark:border-dark-border hover:border-blue-500 disabled:opacity-50"
+                  >
+                    {t('explore.batch.clear_selection')}
+                  </button>
+                </>
+              )}
+              {batchInstallError && <p role="alert" className="basis-full px-1 text-sm text-red-600 dark:text-red-400">{batchInstallError}</p>}
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-light-subtle dark:text-dark-subtle">
@@ -226,14 +363,26 @@ export default function ExplorePage() {
           {filteredApplications.map((app) => (
           <div 
             key={app.id} 
-            onClick={() => {
-              setSelectedAppId(app.id);
-              setView('exploredetail');
-            }}
-            className="relative bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-xl p-4 flex flex-col cursor-pointer hover:border-blue-500/50 transition-all group"
+            onClick={() => handleAppCardClick(app)}
+            className={`relative rounded-xl p-4 flex flex-col cursor-pointer transition-all duration-200 group ${
+              selectedInstallableIds.includes(app.id)
+                ? 'border border-blue-500 bg-blue-50/70 ring-2 ring-blue-500/15 dark:bg-blue-950/25'
+                : 'border border-light-border bg-light-surface hover:-translate-y-0.5 hover:border-blue-500/50 hover:shadow-md dark:border-dark-border dark:bg-dark-surface'
+            }`}
           >
+            {selectionMode && !app.install?.installed && (
+              <input
+                type="checkbox"
+                aria-label={t('explore.batch.select_app', { name: app.name })}
+                checked={selectedInstallableIds.includes(app.id)}
+                onClick={(event) => event.stopPropagation()}
+                onChange={() => toggleAppSelection(app.id)}
+                disabled={batchInstalling || !!installingId}
+                className="absolute right-4 top-4 z-10 h-4 w-4 animate-in zoom-in-90 duration-150 accent-blue-600"
+              />
+            )}
             {installingId === app.id && (
-              <div className="absolute top-4 right-4">
+              <div className={`absolute top-4 ${selectionMode && !app.install?.installed ? 'right-10' : 'right-4'}`}>
                 <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
               </div>
             )}
@@ -252,7 +401,22 @@ export default function ExplorePage() {
                     to its own full-width line below, so the chips are never
                     squeezed and the name can use the whole card width. */}
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {app.install?.installed && (
+                  {(['installing', 'paused', 'aborting'].includes(app.install?.status ?? '') || installingId === app.id) && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                      {app.install?.status === 'paused'
+                        ? t('apps.status.paused')
+                        : app.install?.status === 'aborting'
+                          ? t('apps.status.aborting')
+                          : <><RefreshCw className="h-3 w-3 animate-spin" /> {t('apps.status.installing')}</>}
+                    </span>
+                  )}
+                  {app.install?.status === 'failed' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                      <AlertTriangle className="h-3 w-3" />
+                      {t('apps.status.failed')}
+                    </span>
+                  )}
+                  {app.install?.installed && app.install.installed_at && (
                     <div className="relative group/status shrink-0">
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 font-medium shrink-0 cursor-help">
                         {t('explore.status.installed')}
@@ -303,15 +467,57 @@ export default function ExplorePage() {
                 e.stopPropagation();
                 installApplication(app);
               }}
-              disabled={!!app.install?.installed}
+              disabled={
+                !!app.install?.installed ||
+                (!!installingId && installingId !== app.id) ||
+                ['installing', 'paused', 'aborting'].includes(app.install?.status ?? '')
+              }
               className={`mt-auto w-full px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors ${
                 app.install?.installed 
                   ? 'bg-green-600/20 text-green-600 dark:text-green-400 cursor-default font-medium' 
                   : 'bg-blue-600 hover:bg-blue-700 text-white'
               }`}
             >
-              <Download className="w-4 h-4" /> {app.install?.installed ? t('explore.status.installed') : t('explore.action.install')}
+              {installingId === app.id
+                ? <RefreshCw className="w-4 h-4 animate-spin" />
+                : <Download className="w-4 h-4" />}
+              {app.install?.installed
+                ? t('explore.status.installed')
+                : app.install?.status === 'paused'
+                  ? t('apps.status.paused')
+                  : app.install?.status === 'aborting'
+                    ? t('apps.install.aborting')
+                    : installingId === app.id || app.install?.status === 'installing'
+                      ? t('explore.batch.installing')
+                  : t('explore.action.install')}
             </button>
+            <AppInstallControls
+              appId={app.catalogId || app.id}
+              status={app.install?.status}
+              compact
+              onStatusChange={(status) => setInstallStatus(app, status)}
+            />
+            {installingId === app.id && (
+              <div className="mt-2 space-y-1">
+                {installProgress[app.id] !== null &&
+                  installProgress[app.id] !== undefined && (
+                    <div className="h-1.5 overflow-hidden rounded-full bg-light-muted dark:bg-dark-muted">
+                      <div
+                        className="h-full bg-blue-600 transition-all"
+                        style={{ width: `${installProgress[app.id]}%` }}
+                      />
+                    </div>
+                  )}
+                <p className="text-[10px] text-light-subtle dark:text-dark-subtle truncate">
+                  {installLogs[app.id]?.[installLogs[app.id].length - 1] || t('explore.batch.installing')}
+                </p>
+              </div>
+            )}
+            {installErrors[app.id] && (
+              <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
+                {installErrors[app.id]}
+              </p>
+            )}
           </div>
         ))}
           </div>

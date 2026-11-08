@@ -1,7 +1,8 @@
 import { Application } from '../../src/types/api'
 import { pathToFileURL } from 'url';
 import { join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
+import { LAN_NAS_APP_ID } from '../../src/shared/channel-types';
 
 /**
  * Locates `resources/market` for the local component artifacts. In packaged
@@ -18,6 +19,27 @@ const marketDir = marketDirCandidates.find((dir) => existsSync(dir)) ?? marketDi
 /** file:// URL of a marketplace artifact shipped with the app. */
 const marketFile = (name: string) => pathToFileURL(join(marketDir, name)).href;
 
+const deepseekConfig = JSON.parse(
+  readFileSync(join(marketDir, 'deepseek-r1-1.5b.json'), 'utf8')
+) as {
+  image: string;
+  hostPort: number;
+  containerPort: number;
+  contextSize: number;
+  modelUrl: string;
+};
+
+const fileBrowserNasConfig = JSON.parse(
+  readFileSync(join(marketDir, 'filebrowser-nas.json'), 'utf8')
+) as {
+  image: string;
+  hostPort: number;
+  containerPort: number;
+  postInstallActions: Application['postInstallActions'];
+  postStopActions: Application['postStopActions'];
+  postUnInstallActions: Application['postUnInstallActions'];
+};
+
 const appRequirements = {
   platform: 'any' as const,
   cpu: 'x64',
@@ -27,6 +49,26 @@ const appRequirements = {
 };
 
 export const MOCK_APPLICATIONS: Application[] = [
+  {
+    id: LAN_NAS_APP_ID,
+    name: 'AiSphere LAN NAS',
+    org: 'AiSphere',
+    version: '1.0.0',
+    description: 'Share a selected folder over your local network. Browse and upload files from phones, tablets, and other computers.',
+    category: 'File Sharing',
+    type: 'other',
+    kind: 'app',
+    runtime: { runtime: 'native' },
+    labels: ['local network', 'NAS', 'file sharing', 'upload'],
+    requirements: {
+      platform: 'any',
+      cpu: 'Any',
+      memory: 'Minimal',
+      storage: 'No additional storage',
+      gpu: 'Not required',
+    },
+    packages: [],
+  },
   {
     id: 'app-001',
     name: 'Ollama',
@@ -161,16 +203,16 @@ export const MOCK_APPLICATIONS: Application[] = [
     org: 'DeepSeek',
     url: 'https://github.com/deepseek-ai/DeepSeek-R1',
     version: 'latest',
-    description: 'Chat with DeepSeek-R1-Distill-Qwen-1.5B locally. Runs llama.cpp in Docker with its built-in web UI; the downloaded GGUF model is detected automatically by the Notes workspace.',
+    description: 'Run DeepSeek-R1-Distill-Qwen-1.5B locally on a personal laptop using CPU inference. AiSphere downloads a compact GGUF model and serves it through llama.cpp; after starting, it appears in the Workspace model picker.',
     category: 'LLMs Inference Engine',
     type: 'llm',
     kind: 'engine',
     runtime: {
       runtime: 'docker',
-      image: 'ghcr.io/ggml-org/llama.cpp:server',
-      options: ['-p', '8091:8080'],
+      image: deepseekConfig.image,
+      options: ['-p', `${deepseekConfig.hostPort}:${deepseekConfig.containerPort}`],
       // {model} is replaced by the runtime with the installed GGUF model.
-      args: ['-m', '{model}', '--host', '0.0.0.0', '--port', '8080', '-c', '8192', '--jinja']
+      args: ['-m', '{model}', '--host', '0.0.0.0', '--port', String(deepseekConfig.containerPort), '-c', String(deepseekConfig.contextSize), '--jinja']
     },
     labels: ['local', 'LLM', 'chat', 'webui', 'docker', 'deepseek', 'reasoning'],
     requirements: {
@@ -181,7 +223,7 @@ export const MOCK_APPLICATIONS: Application[] = [
       gpu: 'Not required (CPU inference)'
     },
     packages: [
-      'https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf'
+      deepseekConfig.modelUrl
     ]
   },
   {
@@ -343,5 +385,38 @@ export const MOCK_APPLICATIONS: Application[] = [
       }
     },
     packages: [marketFile('tools-pack.json')]
+  },
+  {
+    id: 'app-014',
+    name: 'File Browser NAS',
+    org: 'File Browser',
+    url: 'https://github.com/filebrowser/filebrowser',
+    version: 'latest',
+    description: 'Run a browser-based file manager on your local network. Upload, download, and organize files stored in AiSphere app data.',
+    category: 'File Sharing',
+    type: 'other',
+    kind: 'app',
+    runtime: {
+      runtime: 'docker',
+      image: fileBrowserNasConfig.image,
+      options: [
+        '-p', `${fileBrowserNasConfig.hostPort}:${fileBrowserNasConfig.containerPort}`,
+        '-v', '{apphome}/userdata:/srv',
+        '-v', '{apphome}/config:/config',
+        '-v', '{apphome}/database:/database',
+      ],
+    },
+    postInstallActions: fileBrowserNasConfig.postInstallActions,
+    postStopActions: fileBrowserNasConfig.postStopActions,
+    postUnInstallActions: fileBrowserNasConfig.postUnInstallActions,
+    labels: ['local network', 'NAS', 'file sharing', 'upload', 'docker'],
+    requirements: {
+      platform: 'any',
+      cpu: 'Any',
+      memory: 'Minimal',
+      storage: 'User files',
+      gpu: 'Not required',
+    },
+    packages: [marketFile('filebrowser-nas.json')],
   }
-]
+];

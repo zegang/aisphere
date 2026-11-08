@@ -14,12 +14,18 @@ import {
   RUNTIME_DETAIL,
   RUNTIME_ENGINE_START,
   RUNTIME_ENGINE_STOP,
+  SETTING_GET,
+  SETTING_UPDATE,
   UTIL_OPEN_PATH,
   type RuntimeDetail,
   type RuntimeKind,
 } from '@/shared/channel-types';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
+import { useLifecycleHistoryStore } from '@/stores/lifecycleHistoryStore';
+import { SettingKey } from '@/stores/settingStore';
+import { DOCKER_REGISTRY_MIRRORS } from '@/shared/types';
 import { useTranslation } from '@/i18n';
+import { LifecycleHistory } from '@/components/LifecycleHistory';
 
 function capitalize(type: string): string {
   return type.charAt(0).toUpperCase() + type.slice(1);
@@ -49,6 +55,58 @@ export default function RuntimeDetailPage() {
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [dockerRegistryMirror, setDockerRegistryMirror] = useState('');
+  const [dockerRegistryMirrorBusy, setDockerRegistryMirrorBusy] = useState(false);
+  const [dockerRegistryMirrorError, setDockerRegistryMirrorError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    setDockerRegistryMirrorError(null);
+    if (selectedRuntime !== 'docker') return () => { disposed = true; };
+
+    const loadMirror = async () => {
+      try {
+        const result = await window.electron.invoke(SETTING_GET, SettingKey.DockerRegistryMirror);
+        if (!result.success) throw new Error(result.error ?? t('runtimes.docker_config.failed'));
+        const value = result.data?.value;
+        if (!disposed) {
+          setDockerRegistryMirror(
+            typeof value === 'string' && (DOCKER_REGISTRY_MIRRORS as readonly string[]).includes(value)
+              ? value
+              : '',
+          );
+        }
+      } catch (err) {
+        console.error('Failed to load Docker registry mirror preference:', err);
+        if (!disposed) setDockerRegistryMirrorError(err instanceof Error ? err.message : String(err));
+      }
+    };
+
+    loadMirror();
+    return () => {
+      disposed = true;
+    };
+  }, [selectedRuntime, t]);
+
+  const updateDockerRegistryMirror = async (value: string) => {
+    const previous = dockerRegistryMirror;
+    setDockerRegistryMirror(value);
+    setDockerRegistryMirrorBusy(true);
+    setDockerRegistryMirrorError(null);
+    try {
+      const result = await window.electron.invoke(SETTING_UPDATE, {
+        key: SettingKey.DockerRegistryMirror,
+        value,
+      });
+      if (!result.success) throw new Error(result.error ?? t('runtimes.docker_config.failed'));
+    } catch (err) {
+      console.error('Failed to save Docker registry mirror preference:', err);
+      setDockerRegistryMirror(previous);
+      setDockerRegistryMirrorError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDockerRegistryMirrorBusy(false);
+    }
+  };
 
   const load = useCallback(
     async (type: RuntimeKind) => {
@@ -103,6 +161,12 @@ export default function RuntimeDetailPage() {
     try {
       const result = await window.electron.invoke(RUNTIME_ENGINE_STOP, selectedRuntime);
       if (result.success) {
+        useLifecycleHistoryStore.getState().recordRuns(
+          'runtime',
+          selectedRuntime,
+          selectedRuntime,
+          result.data?.lifecycleRuns,
+        );
         await load(selectedRuntime);
       } else {
         setActionError(result.error || t('runtimes.action.stop_failed'));
@@ -257,6 +321,38 @@ export default function RuntimeDetailPage() {
                   </button>
                 )}
               </section>
+
+              <LifecycleHistory ownerType="runtime" ownerId={selectedRuntime} />
+
+              {selectedRuntime === 'docker' && (
+                <section className="bg-light-surface dark:bg-dark-surface rounded-xl border border-light-border dark:border-dark-border shadow-sm p-5">
+                  <h3 className="text-base font-semibold mb-1">{t('runtimes.docker_config.title')}</h3>
+                  <p id="docker-registry-mirror-hint" className="text-xs text-light-subtle dark:text-dark-subtle mb-3">
+                    {t('runtimes.docker_config.hint')}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <select
+                      id="docker-registry-mirror"
+                      value={dockerRegistryMirror}
+                      onChange={(event) => updateDockerRegistryMirror(event.target.value)}
+                      disabled={dockerRegistryMirrorBusy}
+                      aria-describedby="docker-registry-mirror-hint"
+                      className="bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded px-3 py-1.5 text-sm disabled:opacity-50"
+                    >
+                      <option value="">{t('runtimes.docker_config.direct')}</option>
+                      {DOCKER_REGISTRY_MIRRORS.map((mirror) => (
+                        <option key={mirror} value={mirror}>{mirror}</option>
+                      ))}
+                    </select>
+                    {dockerRegistryMirrorBusy && (
+                      <span className="text-xs text-light-subtle dark:text-dark-subtle">{t('runtimes.docker_config.saving')}</span>
+                    )}
+                  </div>
+                  {dockerRegistryMirrorError && (
+                    <p role="alert" className="mt-2 text-sm text-red-500">{dockerRegistryMirrorError}</p>
+                  )}
+                </section>
+              )}
 
               {/* When the engine is stopped the Engine row already says so; the
                   backend message ("The Docker engine is not running.") would be

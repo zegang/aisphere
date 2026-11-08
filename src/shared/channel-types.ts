@@ -12,6 +12,11 @@ export const APP_UPDATE = 'app:update' as const;
 export const APP_STATUS = 'app:status' as const;
 export const APP_INSPECT = 'app:inspect' as const;
 export const APP_OPEN_INTERACTIVE_SHELL = 'app:openInteractiveShell' as const;
+export const TERMINAL_INIT = 'terminal:init' as const;
+export const TERMINAL_LOGS = 'terminal:logs' as const;
+export const TERMINAL_INPUT = 'terminal:input' as const;
+export const TERMINAL_RESIZE = 'terminal:resize' as const;
+export const TERMINAL_CLOSE = 'terminal:close' as const;
 
 // Settings channels
 export const SETTING_LIST = 'setting:list' as const;
@@ -118,8 +123,50 @@ export const UTIL_SELECT_DIRECTORY = 'util:selectDirectory' as const;
 export const EXPLORE_LIST = 'explore:list' as const;
 export const EXPLORE_DETAIL = 'explore:detail' as const;
 export const EXPLORE_INSTALL = 'explore:install' as const;
+export const EXPLORE_INSTALL_CONTROL = 'explore:install:control' as const;
+export const APP_SHUTDOWN_PROGRESS = 'app:shutdown:progress' as const;
 export const EXPLORE_EXPORT = 'explore:export' as const;
 export const EXPLORE_IMPORT = 'explore:import' as const;
+
+export type AppInstallStatus = 'installing' | 'paused' | 'aborting' | 'installed' | 'failed' | 'aborted';
+export type AppInstallControlAction = 'pause' | 'resume' | 'abort';
+export interface AppInstallControlRequest {
+  appId: string;
+  action: AppInstallControlAction;
+}
+export interface AppInstallControlResult {
+  appId: string;
+  status: AppInstallStatus;
+}
+export interface AppShutdownProgressEvent {
+  phase: 'preparing' | 'cancelling-install' | 'stopping-app' | 'stopping-runtime' | 'completed';
+  current: number;
+  total: number;
+  name?: string;
+}
+
+// Built-in local network file sharing service.
+export const LAN_NAS_APP_ID = 'builtin-lan-nas' as const;
+export const LAN_NAS_STATUS = 'lan-nas:status' as const;
+export const LAN_NAS_START = 'lan-nas:start' as const;
+export const LAN_NAS_STOP = 'lan-nas:stop' as const;
+
+export interface LanNasConfig {
+  directory: string;
+  authenticationEnabled: boolean;
+}
+
+export interface LanNasStatus {
+  running: boolean;
+  directory?: string;
+  authenticationEnabled: boolean;
+  urls: string[];
+  password?: string;
+}
+
+export type LanNasStartRequest = LanNasConfig;
+
+export type LanNasStartResult = LanNasStatus;
 
 /** Export payload: catalog app specs to save. `targetPath` bypasses the native save/folder dialog (automation). */
 export interface ExploreExportRequest {
@@ -156,6 +203,8 @@ export interface RuntimeConfigSpec {
   name: string;
   hasEngine: boolean;
   autoStart: 'always' | 'never' | null;
+  /** Selected Docker Hub pull-through mirror; omitted by older exports. */
+  dockerRegistryMirror?: string | null;
   installed: boolean;
   managed: boolean;
   version?: string;
@@ -250,8 +299,10 @@ export type LogChannel = typeof LOG_SEND;
 export type UtilChannel = typeof UTIL_OPEN_PATH | typeof UTIL_SELECT_DIRECTORY;
 
 export type ExploreChannel =
-  | typeof EXPLORE_LIST | typeof EXPLORE_DETAIL | typeof EXPLORE_INSTALL
+  | typeof EXPLORE_LIST | typeof EXPLORE_DETAIL | typeof EXPLORE_INSTALL | typeof EXPLORE_INSTALL_CONTROL
   | typeof EXPLORE_EXPORT | typeof EXPLORE_IMPORT;
 
+export type LanNasChannel = typeof LAN_NAS_STATUS | typeof LAN_NAS_START | typeof LAN_NAS_STOP;
+
 export type AllChannels =
-  | LogChannel | SettingChannel | AppChannel | ExploreChannel | UtilChannel;
+  | LogChannel | SettingChannel | AppChannel | ExploreChannel | UtilChannel | LanNasChannel;

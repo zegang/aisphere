@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Plus,
-  Mic,
   Send,
   FileText,
   BookOpen,
@@ -11,6 +10,8 @@ import {
   Sparkles,
   ChevronDown,
   Volume2,
+  VolumeX,
+  Copy,
   RefreshCw,
   Check,
   Cpu,
@@ -150,7 +151,11 @@ export default function WorkspacePage() {
   const [attachedToolIds, setAttachedToolIds] = useState<string[]>([]);
   const [rightTab, setRightTab] = useState<RightTab>('agents');
   const [isThinking, setIsThinking] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [messageFeedback, setMessageFeedback] = useState<{
+    messageId: string;
+    status: 'copied' | 'copy-failed' | 'read-failed';
+  } | null>(null);
   // Left column: inline rename state for workspaces ("null" = none editing).
   const [renamingWorkspaceId, setRenamingWorkspaceId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -158,10 +163,23 @@ export default function WorkspacePage() {
   const [engineStart, setEngineStart] = useState<{ request: EngineStartRequest; modelId: string } | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Once the user picks a model explicitly we stop applying the default. The
   // app list can arrive in stages (installed first, then the rest), so without
   // this the default would stay stuck on whichever model loaded first.
   const userSelectedRef = useRef(false);
+
+  useEffect(() => () => {
+    window.speechSynthesis?.cancel();
+    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    window.speechSynthesis?.cancel();
+    speechUtteranceRef.current = null;
+    setSpeakingMessageId(null);
+  }, [activeWorkspaceId]);
 
   // Live engine statuses are polled while the workspace is open so the model
   // picker reflects "running / stopped" like My Apps does. The effect keys on
@@ -435,22 +453,23 @@ export default function WorkspacePage() {
         requestId,
       });
       if (result.success && result.data?.content) {
+        const reasoning = thought.trim();
         useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
           content: result.data.content,
-          reasoning: undefined,
+          reasoning: reasoning && reasoning !== result.data.content.trim() ? reasoning : undefined,
           streaming: false,
         });
       } else {
         useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
           content: t('workspace.chat_failed', { error: result.error ?? '' }),
-          reasoning: undefined,
+          reasoning: thought.trim() || undefined,
           streaming: false,
         });
       }
     } catch (error: any) {
       useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
         content: t('workspace.chat_failed', { error: error?.message ?? String(error) }),
-        reasoning: undefined,
+        reasoning: thought.trim() || undefined,
         streaming: false,
       });
     } finally {
@@ -460,9 +479,52 @@ export default function WorkspacePage() {
     }
   };
 
-  const toggleSpeech = () => {
-    setIsSpeaking(!isSpeaking);
-    // Implementation for STT would go here
+  const copyMessage = async (messageId: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessageFeedback({ messageId, status: 'copied' });
+    } catch (error) {
+      console.error('Failed to copy workspace message:', error);
+      setMessageFeedback({ messageId, status: 'copy-failed' });
+    } finally {
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = setTimeout(() => setMessageFeedback(null), 2200);
+    }
+  };
+
+  const toggleReadAloud = (messageId: string, text: string) => {
+    if (!window.speechSynthesis) {
+      setMessageFeedback({ messageId, status: 'read-failed' });
+      return;
+    }
+    if (speakingMessageId === messageId) {
+      window.speechSynthesis.cancel();
+      speechUtteranceRef.current = null;
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = navigator.language;
+    utterance.onend = () => {
+      if (speechUtteranceRef.current === utterance) {
+        speechUtteranceRef.current = null;
+        setSpeakingMessageId(null);
+      }
+    };
+    utterance.onerror = (event) => {
+      if (speechUtteranceRef.current === utterance) {
+        speechUtteranceRef.current = null;
+        setSpeakingMessageId(null);
+        if (event.error !== 'canceled' && event.error !== 'interrupted') {
+          setMessageFeedback({ messageId, status: 'read-failed' });
+        }
+      }
+    };
+    speechUtteranceRef.current = utterance;
+    setSpeakingMessageId(messageId);
+    window.speechSynthesis.speak(utterance);
   };
 
   const closeMenus = () => {
@@ -807,14 +869,6 @@ export default function WorkspacePage() {
               )}
             </div>
           </div>
-          <div className="flex gap-2 shrink-0">
-            <button
-              title={t('workspace.read_aloud')}
-              className="p-2 hover:bg-light-muted dark:hover:bg-dark-muted rounded-full transition-colors"
-            >
-              <Volume2 className="w-4 h-4 text-light-muted dark:text-dark-muted" />
-            </button>
-          </div>
         </div>
 
         {/* Messages */}
@@ -822,22 +876,31 @@ export default function WorkspacePage() {
           {messages.map((msg) => {
             const streaming = Boolean(msg.streaming);
             const waitingFirstToken = streaming && !msg.content && !msg.reasoning;
+            const messageContent = msg.id === 'welcome' ? t('workspace.initial_message') : msg.content;
+            const feedback = messageFeedback?.messageId === msg.id ? messageFeedback.status : undefined;
             return (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
+                <div className={`group flex w-fit max-w-[88%] min-w-0 flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`w-fit max-w-full rounded-2xl px-4 py-3 shadow-sm ${
                   msg.role === 'user'
                     ? 'bg-blue-600 text-white rounded-tr-none'
                     : 'bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-tl-none'
                 }`}>
                   {msg.reasoning && (
-                    <div className={`rounded-xl border border-light-border/70 bg-light-muted/50 px-3 py-2 dark:border-dark-border/70 dark:bg-dark-muted/40 ${msg.content ? 'mb-2' : ''}`}>
-                      <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-light-subtle dark:text-dark-subtle">
-                        <Sparkles className="h-3 w-3" /> {t('workspace.thinking')}
-                      </p>
-                      <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-light-subtle dark:text-dark-subtle">
+                    <details
+                      open={streaming ? true : undefined}
+                      className={`group/thinking rounded-xl border border-light-border/70 bg-light-muted/50 px-3 py-2 dark:border-dark-border/70 dark:bg-dark-muted/40 ${msg.content ? 'mb-3' : 'mb-2'}`}
+                    >
+                      <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-light-subtle outline-none dark:text-dark-subtle [&::-webkit-details-marker]:hidden">
+                        <Sparkles className="h-3 w-3 text-blue-500" />
+                        {streaming ? t('workspace.thinking') : t('workspace.thinking_process')}
+                        {streaming && <span className="ml-1 h-1.5 w-1.5 animate-pulse rounded-full bg-blue-500" />}
+                        <ChevronDown className="ml-auto h-3 w-3 transition-transform group-open/thinking:rotate-180" />
+                      </summary>
+                      <p className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-light-subtle dark:text-dark-subtle">
                         {msg.reasoning}
                       </p>
-                    </div>
+                    </details>
                   )}
                   {waitingFirstToken ? (
                     <div className="flex gap-1.5 py-1">
@@ -847,7 +910,7 @@ export default function WorkspacePage() {
                     </div>
                   ) : (
                     <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                      {msg.id === 'welcome' ? t('workspace.initial_message') : msg.content}
+                      {messageContent}
                       {streaming && (msg.content || msg.reasoning) ? (
                         <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-current align-middle" />
                       ) : null}
@@ -856,6 +919,42 @@ export default function WorkspacePage() {
                   <span className="text-[10px] opacity-50 mt-1 block">
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
+                </div>
+                {messageContent.trim() && !streaming && (
+                  <div className={`mt-1 flex items-center gap-1 rounded-lg border border-light-border/70 bg-light-surface/90 p-0.5 opacity-100 shadow-sm transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 dark:border-dark-border/70 dark:bg-dark-surface/90 ${
+                    msg.role === 'user' ? 'self-end' : 'self-start'
+                  }`}>
+                    <button
+                      type="button"
+                      onClick={() => copyMessage(msg.id, messageContent)}
+                      aria-label={t(feedback === 'copied' ? 'workspace.copied' : 'workspace.copy_message')}
+                      title={t(feedback === 'copied' ? 'workspace.copied' : 'workspace.copy_message')}
+                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-light-subtle transition-colors hover:bg-light-muted hover:text-light-text dark:text-dark-subtle dark:hover:bg-dark-muted dark:hover:text-dark-text"
+                    >
+                      {feedback === 'copied' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+                      {feedback === 'copied' ? t('workspace.copied') : t('workspace.copy')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleReadAloud(msg.id, messageContent)}
+                      aria-label={t(speakingMessageId === msg.id ? 'workspace.stop_reading' : 'workspace.read_aloud')}
+                      title={t(speakingMessageId === msg.id ? 'workspace.stop_reading' : 'workspace.read_aloud')}
+                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition-colors hover:bg-light-muted dark:hover:bg-dark-muted ${
+                        speakingMessageId === msg.id
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-light-subtle hover:text-light-text dark:text-dark-subtle dark:hover:text-dark-text'
+                      }`}
+                    >
+                      {speakingMessageId === msg.id ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                      {t(speakingMessageId === msg.id ? 'workspace.stop_reading' : 'workspace.read_aloud')}
+                    </button>
+                    {(feedback === 'copy-failed' || feedback === 'read-failed') && (
+                      <span role="status" className="px-1 text-[10px] text-red-600 dark:text-red-400">
+                        {t(feedback === 'copy-failed' ? 'workspace.copy_failed' : 'workspace.read_failed')}
+                      </span>
+                    )}
+                  </div>
+                )}
                 </div>
               </div>
             );
@@ -982,12 +1081,6 @@ export default function WorkspacePage() {
               }`}
             >
               <Wrench className="w-[18px] h-[18px]" />
-            </button>
-            <button
-              onClick={toggleSpeech}
-              className={`p-2 rounded-xl transition-colors ${isSpeaking ? 'bg-red-100 text-red-600 animate-pulse' : 'hover:bg-light-muted dark:hover:bg-dark-muted'}`}
-            >
-              <Mic className="w-5 h-5" />
             </button>
             <textarea
               value={input}

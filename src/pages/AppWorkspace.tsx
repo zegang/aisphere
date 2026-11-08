@@ -7,15 +7,21 @@ import {
   Settings, Edit2, Save, AlertCircle, FileText, ExternalLink, Globe
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { AppInstallControls } from '@/components/AppInstallControls';
+import { LifecycleHistory } from '@/components/LifecycleHistory';
+import type { AppInstallStatus } from '@/shared/channel-types';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
-import { UTIL_OPEN_PATH, APP_STATUS } from '@/shared/channel-types';
+import {
+  APP_STATUS, TERMINAL_CLOSE, TERMINAL_INIT, TERMINAL_INPUT, TERMINAL_LOGS, TERMINAL_RESIZE, UTIL_OPEN_PATH,
+} from '@/shared/channel-types';
 import 'xterm/css/xterm.css';
 
 function BottomTerminal({ appId, onClose, type = 'shell' }: { appId: string; onClose: () => void; type?: 'shell' | 'logs' }) {
   const { t } = useTranslation();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
   const [height, setHeight] = useState(300);
   const [isResizing, setIsResizing] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -52,44 +58,82 @@ function BottomTerminal({ appId, onClose, type = 'shell' }: { appId: string; onC
       cursorBlink: true,
       fontSize: 13,
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Courier New, monospace',
+      scrollback: 10000,
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(terminalRef.current);
     fitAddon.fit();
     xtermRef.current = term;
+    fitAddonRef.current = fitAddon;
 
-    const ipcChannel = type === 'shell' ? 'terminal:init' : 'terminal:logs';
     const outputId = type === 'shell' ? appId : `${appId}:logs`;
-
-    window.electron.invoke(ipcChannel as any, appId);
+    let disposed = false;
 
     const outputHandler = (data: any) => term.write(String(data));
     window.electron.on(`terminal:output:${outputId}`, outputHandler);
 
     if (type === 'shell') {
       term.onData((data) => {
-        window.electron.invoke('terminal:input' as any, { id: appId, data });
+        window.electron.invoke(TERMINAL_INPUT, { id: outputId, data });
       });
     }
 
     const handleResize = () => {
       fitAddon.fit();
-      window.electron.invoke((type === 'shell' ? 'terminal:resize' : 'terminal:resize' /* Log resize handled same */) as any, {
-        id: appId,
+      window.electron.invoke(TERMINAL_RESIZE, {
+        id: outputId,
         cols: term.cols,
         rows: term.rows,
       });
     };
 
+    const initialize = async () => {
+      try {
+        const result = type === 'shell'
+          ? await window.electron.invoke(TERMINAL_INIT, appId)
+          : await window.electron.invoke(TERMINAL_LOGS, appId);
+        if (disposed) {
+          await window.electron.invoke(TERMINAL_CLOSE, outputId);
+          return;
+        }
+        if (!result.success) term.write(`\r\n\x1b[31m${result.error || t('apps.workspace.terminal_failed')}\x1b[0m\r\n`);
+      } catch (error) {
+        if (!disposed) {
+          const message = error instanceof Error ? error.message : String(error);
+          term.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
+        }
+      }
+    };
+    void initialize();
+
     window.addEventListener('resize', handleResize);
 
     return () => {
+      disposed = true;
       window.removeEventListener('resize', handleResize);
       window.electron.removeListener(`terminal:output:${outputId}`, outputHandler);
+      void window.electron.invoke(TERMINAL_CLOSE, outputId);
+      if (fitAddonRef.current === fitAddon) fitAddonRef.current = null;
+      if (xtermRef.current === term) xtermRef.current = null;
       term.dispose();
     };
-  }, [appId, isMaximized, height, type]);
+  }, [appId, type, t]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      fitAddonRef.current?.fit();
+      const outputId = type === 'shell' ? appId : `${appId}:logs`;
+      if (xtermRef.current) {
+        void window.electron.invoke(TERMINAL_RESIZE, {
+          id: outputId,
+          cols: xtermRef.current.cols,
+          rows: xtermRef.current.rows,
+        });
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [appId, height, isMaximized, type]);
 
   const terminalStyle = {
     height: isMaximized ? '100%' : `${height}px`,
@@ -147,6 +191,8 @@ export default function AppWorkspace() {
   const {
     applications,
     selectedId,
+    lifecycleResultsByAppId,
+    dismissLifecycleResults,
     startApplication,
     stopApplication,
     uninstallApplication,
@@ -171,7 +217,20 @@ export default function AppWorkspace() {
     startscript: ''
   });
   const app = applications.find(a => a.id === selectedId);
-  const appStatus = app?.task?.status || 'stopped';
+  const lifecycleResults = app ? lifecycleResultsByAppId[app.id] : undefined;
+  const installStatus = app?.install?.status;
+  const appStatus = installStatus && ['installing', 'paused', 'aborting', 'aborted'].includes(installStatus)
+    ? installStatus
+    : app?.task?.status || 'stopped';
+
+  const updateInstallStatus = (status: AppInstallStatus) => {
+    if (!app) return;
+    useAppStore.setState((state) => ({
+      applications: state.applications.map((item) =>
+        item.id === app.id ? { ...item, install: { ...item.install, installed: false, status } } : item
+      ),
+    }));
+  };
 
   useEffect(() => {
     if (!pendingWebUrl) return;
@@ -256,6 +315,8 @@ export default function AppWorkspace() {
                   className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full ${
                     appStatus === 'running' || appStatus === 'starting'
                       ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : appStatus === 'installing' || appStatus === 'aborting'
+                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
                       : appStatus === 'failed'
                       ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                       : 'bg-gray-100 text-gray-600 dark:bg-dark-muted dark:text-dark-subtle'
@@ -269,7 +330,15 @@ export default function AppWorkspace() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {(appStatus === 'running' || appStatus === 'starting' || appStatus === 'failed' || appStatus === 'stopping') && (
+          {['installing', 'paused', 'aborting'].includes(installStatus ?? '') && (
+            <AppInstallControls
+              appId={app.catalogId || app.id}
+              status={installStatus}
+              onStatusChange={updateInstallStatus}
+            />
+          )}
+          {!['installing', 'paused', 'aborting'].includes(installStatus ?? '') &&
+            (appStatus === 'running' || appStatus === 'starting' || appStatus === 'failed' || appStatus === 'stopping') && (
             <button
               onClick={() => stopApplication(app.id)}
               disabled={appStatus === 'stopping'}
@@ -279,7 +348,9 @@ export default function AppWorkspace() {
             </button>
           )}
 
-          {(appStatus === 'stopped' || appStatus === 'failed' || appStatus === 'stopping' || appStatus === 'starting') && (
+          {!['installing', 'paused', 'aborting'].includes(installStatus ?? '') &&
+            app.install?.installed !== false &&
+            (appStatus === 'stopped' || appStatus === 'failed' || appStatus === 'stopping' || appStatus === 'starting') && (
             <button
               onClick={() => startApplication(app.id)}
               disabled={appStatus === 'stopping' || appStatus === 'starting'}
@@ -290,6 +361,7 @@ export default function AppWorkspace() {
           )}
           <button
             onClick={handleUninstall}
+            disabled={['installing', 'paused', 'aborting'].includes(installStatus ?? '')}
             className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-light-border dark:border-dark-border hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/10 transition-colors"
           >
             <Trash2 className="w-4 h-4" /> {t('app.uninstall')}
@@ -300,6 +372,7 @@ export default function AppWorkspace() {
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-6xl mx-auto space-y-6">
+          <LifecycleHistory ownerType="app" ownerId={app.id} />
           {appStatus === 'failed' && app.error && (
             <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/50 rounded-xl p-4 flex items-start gap-3 text-red-700 dark:text-red-400 animate-in fade-in slide-in-from-top-2 duration-300">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -315,6 +388,44 @@ export default function AppWorkspace() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+          )}
+
+          {lifecycleResults && (
+            <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/60 dark:bg-blue-900/20">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-200">
+                    {t('apps.workspace.lifecycle_actions')}
+                  </h4>
+                  <div className="mt-2 space-y-2">
+                    {lifecycleResults.map((result) => (
+                      <div key={result.id}>
+                        <span className={`mr-2 text-xs font-semibold uppercase ${
+                          result.status === 'failed'
+                            ? 'text-red-600 dark:text-red-400'
+                            : result.status === 'skipped'
+                              ? 'text-amber-700 dark:text-amber-400'
+                              : 'text-green-700 dark:text-green-400'
+                        }`}>
+                          {t(`apps.workspace.lifecycle_status.${result.status}`)}
+                        </span>
+                        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-light-text dark:text-dark-text">
+                          {result.message}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => dismissLifecycleResults(app.id)}
+                  className="shrink-0 rounded p-1 text-blue-700 hover:bg-blue-100 dark:text-blue-300 dark:hover:bg-blue-900/40"
+                  title={t('apps.workspace.dismiss')}
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </section>
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -381,7 +492,10 @@ export default function AppWorkspace() {
                       {app.task.status === 'running' && (
                         <div className="flex items-center gap-2 mt-4 pt-4 border-t border-light-border dark:border-dark-border">
                           <button
-                            onClick={() => setActiveTerminalId(app.id)}
+                            onClick={() => {
+                              setActiveLogId(null);
+                              setActiveTerminalId(app.id);
+                            }}
                             className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400 transition-colors uppercase tracking-tight"
                           >
                             <Terminal className="w-3.5 h-3.5" /> {t('apps.workspace.console')}

@@ -3,14 +3,22 @@ import { useExploreStore } from '../stores/exploreStore';
 import { useAiSphereStore } from '../stores/aiSphereStore';
 import { ArrowLeft, Download, AppWindow, Calendar, Shield, Cpu, Layout, Tag, Folder, Info, Globe, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { AppInstallControls } from '@/components/AppInstallControls';
+import type { AppInstallStatus } from '@/shared/channel-types';
 
 export default function ExploreDetailPage() {
   const { t } = useTranslation();
-  const { applications, selectedAppId, installApplication, installingId } = useExploreStore();
+  const {
+    applications,
+    selectedAppId,
+    installApplication,
+    installingId,
+    installProgress,
+    installLogs,
+    installErrors,
+  } = useExploreStore();
   const setView = useAiSphereStore(s => s.setView);
 
-  const [logs, setLogs] = useState<string[]>([]);
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
   const [logHeight, setLogHeight] = useState(320);
@@ -18,6 +26,16 @@ export default function ExploreDetailPage() {
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const app = applications.find(a => a.id === selectedAppId);
+  const logs = app ? installLogs[app.id] ?? [] : [];
+  const downloadProgress = app ? installProgress[app.id] ?? null : null;
+  const setInstallStatus = (status: AppInstallStatus) => {
+    if (!app) return;
+    useExploreStore.setState((state) => ({
+      applications: state.applications.map((item) =>
+        item.id === app.id ? { ...item, install: { ...item.install, installed: false, status } } : item
+      ),
+    }));
+  };
 
   useEffect(() => {
     if (!isResizing) return;
@@ -42,29 +60,7 @@ export default function ExploreDetailPage() {
   }, [isResizing]);
 
   useEffect(() => {
-    if (!app || installingId !== app.id) {
-      setDownloadProgress(null);
-      return;
-    }
-
-    setShowLogs(true);
-    setLogs([`Initiating installation for ${app.name}...`]);
-    setDownloadProgress(0);
-
-    const logHandler = (data: any) => {
-      setLogs(prev => [...prev, String(data)]);
-    };
-
-    const progressHandler = (data: any) => {
-      setDownloadProgress(data.percentage);
-    };
-
-    window.electron.on(`app:install:log:${app.id}`, logHandler);
-    window.electron.on(`app:install:progress:${app.id}`, progressHandler);
-    return () => {
-      window.electron.removeListener(`app:install:log:${app.id}`, logHandler);
-      window.electron.removeListener(`app:install:progress:${app.id}`, progressHandler);
-    };
+    if (app && installingId === app.id) setShowLogs(true);
   }, [installingId, app?.id]);
 
   useEffect(() => {
@@ -163,7 +159,11 @@ export default function ExploreDetailPage() {
                 installApplication(app);
               }
             }}
-            disabled={!!app.install?.installed || (!!installingId && installingId !== app.id)}
+            disabled={
+              !!app.install?.installed ||
+              (!!installingId && installingId !== app.id) ||
+              ['installing', 'paused', 'aborting'].includes(app.install?.status ?? '')
+            }
             className={`w-full py-4 rounded-xl flex items-center justify-center gap-2 font-bold transition-all shadow-lg ${
               app.install?.installed
                 ? 'bg-green-600/20 text-green-600 dark:text-green-400 cursor-default'
@@ -173,10 +173,24 @@ export default function ExploreDetailPage() {
             {installingId === app.id ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
             {app.install?.installed
               ? t('explore.status.installed')
-              : installingId === app.id
+              : app.install?.status === 'paused'
+                ? t('apps.status.paused')
+                : app.install?.status === 'aborting'
+                  ? t('apps.install.aborting')
+                  : installingId === app.id || app.install?.status === 'installing'
                 ? downloadProgress !== null && downloadProgress > 0 && downloadProgress < 100 ? `Downloading ${downloadProgress}%` : 'Installing...'
                 : t('explore.action.install')}
           </button>
+          <AppInstallControls
+            appId={app.catalogId || app.id}
+            status={app.install?.status}
+            onStatusChange={setInstallStatus}
+          />
+          {installErrors[app.id] && (
+            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+              {installErrors[app.id]}
+            </p>
+          )}
 
           <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">
             <h3 className="text-sm font-bold flex items-center gap-2 mb-4 uppercase tracking-wider text-light-subtle dark:text-dark-subtle">

@@ -10,6 +10,7 @@
 import { join } from 'path';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import type { RuntimeKind } from '../../src/shared/channel-types';
+import type { LifecycleAction, LifecycleActionHooks } from '../../src/types/api';
 
 export interface BuiltInRuntimeInstallTarget {
   /** Download URL for this platform/arch. */
@@ -37,7 +38,7 @@ export interface BuiltInRuntimeEngine {
   info?: string[];
 }
 
-export interface BuiltInRuntimeConfig {
+export interface BuiltInRuntimeConfig extends LifecycleActionHooks {
   type: RuntimeKind;
   name: string;
   hasEngine: boolean;
@@ -78,6 +79,24 @@ function readPlatform(raw: unknown): Record<string, BuiltInRuntimeInstallTarget>
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function readLifecycleActions(raw: unknown): LifecycleAction[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter((action): action is LifecycleAction => {
+    if (!action || typeof action !== 'object' || typeof action.id !== 'string') return false;
+    if (action.type === 'docker-log-credentials') {
+      return Array.isArray(action.patterns) && action.patterns.every((pattern: unknown) => typeof pattern === 'string');
+    }
+    if (action.type === 'windows-firewall') {
+      return (action.operation === 'ensure' || action.operation === 'remove')
+        && Number.isInteger(action.port)
+        && typeof action.ruleName === 'string'
+        && action.profile === 'private'
+        && action.remoteAddress === 'localsubnet';
+    }
+    return false;
+  });
+}
+
 function normalize(raw: unknown): BuiltInRuntimeConfig | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, any>;
@@ -96,6 +115,9 @@ function normalize(raw: unknown): BuiltInRuntimeConfig | null {
     name: typeof spec.name === 'string' && spec.name ? spec.name : type,
     hasEngine: typeof spec.hasEngine === 'boolean' ? spec.hasEngine : type === 'docker' || type === 'podman',
     autoStart,
+    postInstallActions: readLifecycleActions(spec.postInstallActions),
+    postStopActions: readLifecycleActions(spec.postStopActions),
+    postUnInstallActions: readLifecycleActions(spec.postUnInstallActions),
     install: installRaw ? {
       windows: readPlatform(installRaw.windows),
       linux: readPlatform(installRaw.linux),

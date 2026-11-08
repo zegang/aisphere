@@ -1,4 +1,5 @@
 // Shared API types for IPC communication
+import type { AppInstallStatus, LanNasConfig } from '@/shared/channel-types';
 
 // --- App ---
 export interface AppListResponse { apps: Application[] }
@@ -54,6 +55,55 @@ export interface AppRuntime {
   options?: string[];
   startscript?: string;
   args?: string[];
+}
+
+export type LifecycleAction =
+  | {
+      id: string;
+      type: 'docker-log-credentials';
+      patterns: string[];
+      tailLines?: number;
+    }
+  | {
+      id: string;
+      type: 'windows-firewall';
+      operation: 'ensure' | 'remove';
+      port: number;
+      ruleName: string;
+      profile: 'private';
+      remoteAddress: 'localsubnet';
+    };
+
+export interface LifecycleActionHooks {
+  postInstallActions?: LifecycleAction[];
+  postStopActions?: LifecycleAction[];
+  postUnInstallActions?: LifecycleAction[];
+}
+
+export interface LifecycleActionResult {
+  id: string;
+  status: 'completed' | 'skipped' | 'failed';
+  message: string;
+}
+
+export type LifecycleActionHook = keyof LifecycleActionHooks;
+
+export interface LifecycleActionRun {
+  hook: LifecycleActionHook;
+  results: LifecycleActionResult[];
+}
+
+export interface AppStartResult {
+  task?: AppTask;
+  lifecycleRuns?: LifecycleActionRun[];
+}
+
+export interface AppStopResult {
+  lifecycleRuns?: LifecycleActionRun[];
+}
+
+export interface AppDeleteResult {
+  lifecycleRuns?: LifecycleActionRun[];
 }
 
 // --- Explore kinds: what a catalog entry provides to the workspace ---
@@ -114,8 +164,10 @@ export interface AppComponentManifest {
   instructions?: { content: string };
 }
 
-export interface Application {
+export interface Application extends LifecycleActionHooks {
   id: string;
+  /** Stable catalog ID for installed apps, whose `id` is a generated instance UUID. */
+  catalogId?: string;
   name: string;
   org: string;
   version: string;
@@ -140,15 +192,17 @@ export interface Application {
   component?: AppComponentManifest;
   install?: {
     installed: boolean;
-    installed_at: string;
+    status?: AppInstallStatus;
+    installed_at?: string;
     installed_by?: string;
-    installed_package: string;
+    installed_package?: string;
     installed_image?: string;
   };
   apphomedir?: string,
   status?: string;
   task?: AppTask;
   error?: string;
+  lanNasConfig?: LanNasConfig;
   [key: string]: unknown;
 }
 

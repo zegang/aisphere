@@ -36,6 +36,7 @@
   },
   "explore": {
     "title": "浏览应用",
+    "count": "显示 {{visible}} / {{total}} 个应用",
     "status": {
       "loading": "正在加载目录...",
       "installed": "已安装"
@@ -68,6 +69,19 @@
       "podman": "Podman",
       "conda": "Conda",
       "native": "原生"
+    },
+    "action": {
+      "install": "安装"
+    },
+    "batch": {
+      "select_mode": "选择应用",
+      "done_selecting": "完成",
+      "select_visible": "选择本页所有可安装应用",
+      "select_app": "选择 {{name}}",
+      "selected": "已选择 {{count}} 项",
+      "install_selected": "安装所选（{{count}}）",
+      "installing": "正在安装…",
+      "clear_selection": "清除选择"
     },
     "kinds": {
       "all": "全部",
@@ -145,7 +159,15 @@
       "apptainer": "面向 Linux 高性能计算的高性能容器方案。"
     },
     "action": {
-      "install": "安装",
+      "install": "安装"
+    },
+    "batch": {
+      "select_visible": "选择此页所有可安装应用",
+      "select_app": "选择 {{name}}",
+      "selected": "已选择 {{count}} 个",
+      "install_selected": "安装所选（{{count}}）",
+      "installing": "正在安装…",
+      "clear_selection": "清除选择",
       "start": "启动引擎",
       "starting": "正在启动…",
       "start_failed": "启动运行环境引擎失败。",
@@ -192,6 +214,13 @@
       "go_install": "前往运行环境页面安装",
       "path_entries": "PATH 条目",
       "engine_info": "引擎信息"
+    },
+    "docker_config": {
+      "title": "Docker Hub 镜像源",
+      "hint": "AiSphere 会使用此镜像拉取公开的 Docker Hub 镜像。如果镜像源无法提供镜像，会尝试直接从 Docker Hub 拉取。此设置不会更改 Docker Desktop 的全局配置。",
+      "direct": "直接使用 Docker Hub",
+      "saving": "正在保存…",
+      "failed": "无法读取或保存 Docker 镜像源设置。"
     },
     "engine_info": {
       "server_version": "服务器版本",
@@ -249,9 +278,52 @@
   },
   "apps": {
     "title": "我的应用",
+    "count": "{{count}} 个应用",
     "loading": "正在加载已安装的应用...",
     "empty": "尚未安装任何应用。",
     "no_description": "暂无描述。",
+    "install": {
+      "pause": "暂停",
+      "pause_help": "如果安装脚本正在运行，会先完成当前步骤再暂停。",
+      "resume": "继续",
+      "abort": "取消安装",
+      "aborting": "正在取消安装…",
+      "abort_confirm": "确定取消此安装吗？之后可以重新安装。",
+      "control_failed": "无法更新安装状态。"
+    },
+    "shutdown": {
+      "title": "正在准备退出 AiSphere",
+      "preparing": "正在准备关闭应用和受管理的运行环境…",
+      "cancelling_install": "正在取消进行中的安装…",
+      "stopping_app": "正在停止应用…",
+      "stopping_runtime": "正在停止受管理的运行环境…",
+      "completed": "所有任务已停止，AiSphere 即将关闭…",
+      "keep_open": "请保持 AiSphere 开启，直到此过程完成。"
+    },
+    "nas": {
+      "title": "AiSphere 局域网 NAS",
+      "manage": "管理共享",
+      "close": "关闭",
+      "folder": "共享文件夹",
+      "no_folder": "选择此电脑上的文件夹",
+      "choose_folder": "选择文件夹",
+      "authentication": "需要密码",
+      "authentication_help": "每次启动共享时都会生成新密码。",
+      "secure_note": "仅允许专用局域网中的设备连接。HTTP 未加密，请仅在可信网络中使用。",
+      "open_note": "局域网中的任何设备都可以浏览并上传到此文件夹。HTTP 未加密，请仅在可信网络中使用。",
+      "running": "文件共享服务正在运行。",
+      "stopped": "文件共享服务已停止。",
+      "running_folder": "共享文件夹：{{folder}}",
+      "username": "浏览器用户名",
+      "password": "密码",
+      "copy_password": "复制密码",
+      "start": "开始共享",
+      "stop": "停止共享",
+      "working": "处理中...",
+      "status_failed": "无法读取文件共享状态。",
+      "start_failed": "无法启动文件共享服务。",
+      "stop_failed": "无法停止文件共享服务。"
+    },
     "workspace": {
       "back": "返回应用",
       "not_found": "未找到该应用。",
@@ -302,6 +374,18 @@
       "web_interface": "应用网页界面",
       "interactive_shell": "交互式终端",
       "app_logs": "应用日志",
+      "lifecycle_actions": "设置与清理操作",
+      "lifecycle_history": "生命周期操作历史",
+      "lifecycle_hooks": {
+        "postInstallActions": "安装后",
+        "postStopActions": "停止后",
+        "postUnInstallActions": "卸载后"
+      },
+      "lifecycle_status": {
+        "completed": "已完成",
+        "skipped": "已跳过",
+        "failed": "失败"
+      },
       "maximize": "最大化",
       "minimize": "恢复默认大小",
       "close": "关闭"
@@ -312,7 +396,25 @@
       "open_url": "打开 {{url}}",
       "in_workspace": "已接入工作区"
     },
+    "batch": {
+      "select_mode": "选择应用",
+      "done_selecting": "完成",
+      "select_all": "选择所有可批量管理的应用",
+      "nas_note": "局域网 NAS 使用专用管理控件，不参与批量操作。",
+      "select_app": "选择 {{name}}",
+      "selected": "已选择 {{count}} 个",
+      "start": "启动所选",
+      "stop": "停止所选",
+      "uninstall": "卸载所选",
+      "uninstall_confirm": "确定卸载所选的 {{count}} 个应用吗？其应用数据也会被删除。",
+      "start_skipped": "以下应用的运行环境不可用或应用启动失败，无法启动：{{names}}",
+      "operation_failed": "以下应用操作失败：{{names}}"
+    },
     "status": {
+      "installing": "安装中",
+      "paused": "已暂停",
+      "aborting": "正在取消安装",
+      "aborted": "安装已取消",
       "stopped": "已停止",
       "running": "运行中",
       "starting": "启动中",
@@ -344,7 +446,18 @@
     "runtime_autostart_hint": "当已安装的应用需要尚未启动的运行时，选择要执行的操作。",
     "runtime_ask": "每次询问",
     "runtime_always": "自动启动",
-    "runtime_never": "永不自动启动"
+    "runtime_never": "永不自动启动",
+    "runtime_autoinstall": "运行时自动安装",
+    "runtime_autoinstall_hint": "当应用需要尚未安装的运行时时，选择要执行的操作。",
+    "runtime_install_always": "自动安装",
+    "runtime_install_never": "不自动安装",
+    "runtime_autoinstall_failed": "无法读取或保存运行时自动安装设置。",
+    "stop_runtimes_on_exit": "退出 AiSphere 时",
+    "stop_runtimes_on_exit_hint": "选择退出时是否询问并停止正在运行的应用和 AiSphere 管理的 Docker/Podman 引擎。系统安装的引擎不会被停止。",
+    "shutdown_ask": "每次询问",
+    "shutdown_always": "自动停止",
+    "shutdown_never": "保持运行",
+    "shutdown_setting_failed": "无法读取或保存退出时停止运行环境的设置。"
   },
   "home": {
     "welcome": "欢迎使用 AiSphere",
@@ -429,6 +542,17 @@
     "cancel": "取消",
     "start_launch": "启动并打开"
   },
+  "runtimeAutoInstall": {
+    "title": "安装 {{runtime}}？",
+    "error_title": "无法安装 {{runtime}}",
+    "message": "{{app}} 需要尚未安装的 {{runtime}}。AiSphere 将安装它，在需要时启动其引擎，然后继续安装应用。",
+    "install": "安装并继续",
+    "cancel": "暂不安装",
+    "close": "关闭",
+    "retry": "重试",
+    "failed": "无法安装 {{runtime}}。",
+    "engine_failed": "无法启动 {{runtime}} 引擎。"
+  },
   "workspace": {
     "sources": "来源",
     "search_sources": "搜索来源...",
@@ -450,6 +574,13 @@
     "skills_via": "技能：{{skills}}。",
     "tools_via": "工具（{{count}} 个）：{{tools}}。",
     "read_aloud": "朗读",
+    "stop_reading": "停止朗读",
+    "thinking_process": "思考过程",
+    "copy": "复制",
+    "copy_message": "复制消息",
+    "copied": "已复制",
+    "copy_failed": "无法复制消息",
+    "read_failed": "无法朗读消息",
     "agent_picker": "选择运行此对话的智能体",
     "agent_meta": "{{skills}} 项技能 · {{tools}} 个工具",
     "no_agent": "无智能体（直接对话）",

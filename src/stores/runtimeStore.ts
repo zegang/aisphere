@@ -6,6 +6,7 @@
 // page is mounted.
 
 import { create } from 'zustand';
+import { useLifecycleHistoryStore } from '@/stores/lifecycleHistoryStore';
 import {
   RUNTIME_CHECK,
   RUNTIME_ENGINE_START,
@@ -259,6 +260,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
         }));
         return false;
       }
+      useLifecycleHistoryStore.getState().recordRuns('runtime', type, type, result.data?.lifecycleRuns);
       await get().checkRuntimes();
       return true;
     } catch (error) {
@@ -345,6 +347,8 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
             },
           };
         });
+      } else {
+        useLifecycleHistoryStore.getState().recordRuns('runtime', type, type, result.data?.lifecycleRuns);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -398,6 +402,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
         }));
         return false;
       }
+      useLifecycleHistoryStore.getState().recordRuns('runtime', type, type, result.data?.lifecycleRuns);
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

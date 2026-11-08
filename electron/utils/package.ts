@@ -11,11 +11,16 @@ import { join } from 'path';
 import { SandboxService } from '../services/SandboxService';
 import { AppService } from '../services/AppService';
 import type { RuntimeService } from '../services/RuntimeService';
+import { AppInstallControl } from './app-install-control';
 
 /**
  * Package utility to handle application installation lifecycle: download, unpack, and runtime setup.
  */
 export class Package {
+  private getProgressId(app: Application): string {
+    return app.catalogId || app.id;
+  }
+
   private getLogger() {
     return ServiceContainer.getInstance().get(ServiceName.LogService) as LogService;
   }
@@ -24,21 +29,23 @@ export class Package {
     return ServiceContainer.getInstance().get(ServiceName.SandboxService) as SandboxService;
   }
 
-  async download(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async download(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const logger = this.getLogger();
     const downloader = new Downloader(logger);
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
 
     const msg = `Downloading ${app.packages.length} packages for ${app.name}`;
     logger.info(msg, 'Package');
-    if (event) event.sender.send(`app:install:log:${app.id}`, msg);
+    if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, msg);
     const downloadResults = await downloader.downloads(app.packages, appSvc.getAppHomeDir(app), {
       onProgress: (p) => {
         const percentage = p.totalBytes > 0 ? Math.round((p.downloadedBytes / p.totalBytes) * 100) : 0;
         if (event) {
-          event.sender.send(`app:install:progress:${app.id}`, { percentage });
+          event.sender.send(`app:install:progress:${this.getProgressId(app)}`, { percentage });
         }
-      }
+      },
+      signal: control?.signal,
+      control,
     });
 
     const failedResult = downloadResults.find(r => !r.success);
@@ -47,7 +54,9 @@ export class Package {
     }
 
     app.install = {
+      ...app.install,
       installed: false,
+      status: app.install?.status ?? 'installing',
       installed_at: new Date().toISOString(),
       installed_package: downloadResults[0]?.filePath || ''
     };
@@ -76,7 +85,7 @@ export class Package {
     try {
       await tar.decompress(app.install.installed_package, appSvc.getAppPackageDir(app), {
         onLog: (data) => {
-          if (event) event.sender.send(`app:install:log:${app.id}`, data);
+          if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, data);
         }
       });
       return { success: true, data: app };
@@ -90,7 +99,8 @@ export class Package {
     throw new Error('Method not implemented.');
   }
 
-  async runInstallScript(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async runInstallScript(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
+    await control?.waitUntilResumed();
     const logger = this.getLogger();
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
     const appHomeDir = appSvc.getAppHomeDir(app);
@@ -116,13 +126,14 @@ export class Package {
     }
 
     logger.info(`Running 'install' script for ${app.name}: ${scriptPath}`, 'Package');
-    if (event) event.sender.send(`app:install:log:${app.id}`, `Running 'install' script for ${app.name}: ${scriptPath}`);
+    if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Running 'install' script for ${app.name}: ${scriptPath}`);
     try {
       await this.getSandbox().runShellCommand(scriptPath, [], {
         cwd: appHomeDir,
+        signal: control?.signal,
         onLog: (data) => {
           this.getLogger().debug(data, 'Package:AfterDownloadScript');
-          if (event) event.sender.send(`app:install:log:${app.id}`, data);
+          if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, data);
         }
       });
       return { success: true };
@@ -137,37 +148,40 @@ export class Package {
    * @param app The application to install.
    * @param event Optional Electron IPC event for reporting progress.
    */
-  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
     this.getLogger().info(`App home directory for ${app.name}: ${appSvc.getAppHomeDir(app)}`, 'Package');
 
     try {
-      if (event) event.sender.send(`app:install:log:${app.id}`, `Starting installation of ${app.name}...`);
+      if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Starting installation of ${app.name}...`);
+      await control?.waitUntilResumed();
 
       // 1. Download
-      const downloadResult = await this.download(app, event);
+      const downloadResult = await this.download(app, event, control);
       if (!downloadResult.success || !app.install || !app.install.installed_package) {
-        if (event) event.sender.send(`app:install:log:${app.id}`, `Download failed: ${downloadResult.error}`);
+        if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Download failed: ${downloadResult.error}`);
         return downloadResult;
       }
-      if (event) event.sender.send(`app:install:log:${app.id}`, `Download successful: ${app.install.installed_package}`);
+      if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Download successful: ${app.install.installed_package}`);
 
       // 2. Provision the container runtime for image-based apps (pull image).
       if (app.runtime?.runtime === 'docker') {
-        if (event) event.sender.send(`app:install:log:${app.id}`, `Provisioning the Docker image...`);
+        await control?.waitUntilResumed();
+        if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Provisioning the Docker image...`);
         const runtimeService = ServiceContainer.getInstance().get<RuntimeService>(ServiceName.RuntimeService);
-        const runtimeResult = await runtimeService.install(app, event);
+        const runtimeResult = await runtimeService.install(app, event, control);
         if (!runtimeResult.success) {
-          if (event) event.sender.send(`app:install:log:${app.id}`, `Docker image setup failed: ${runtimeResult.error}`);
+          if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Docker image setup failed: ${runtimeResult.error}`);
           return runtimeResult;
         }
       }
 
       // 3. Run install script if one exists
-      if (event) event.sender.send(`app:install:log:${app.id}`, `Looking for 'afterdownload' scripts...`);
-      const afterDownloadResult = await this.runInstallScript(app, event);
+      if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Looking for 'afterdownload' scripts...`);
+      const afterDownloadResult = await this.runInstallScript(app, event, control);
+      await control?.waitUntilResumed();
       if (event) {
-        event.sender.send(`app:install:log:${app.id}`,
+        event.sender.send(`app:install:log:${this.getProgressId(app)}`,
           afterDownloadResult.success ? `Installation complete!` : `Installation failed: ${afterDownloadResult.error}`);
       }
       // Mark the installation complete. Docker-based apps flip this in

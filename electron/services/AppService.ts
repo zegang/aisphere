@@ -1,7 +1,10 @@
 import { App, ipcMain } from 'electron';
 import { NAMESPACE_DEFAULT, MODULE_APP } from '../../src/shared/modules';
-import { APP_CREATE, APP_DELETE, APP_DETAIL, APP_LIST, APP_OPEN_INTERACTIVE_SHELL, APP_START, APP_STATUS, APP_STOP, APP_UPDATE, APP_INSTALL, IpcResponse } from '../../src/shared/channel-types';
-import { Application } from '../../src/types/api';
+import {
+  APP_CREATE, APP_DELETE, APP_DETAIL, APP_LIST, APP_OPEN_INTERACTIVE_SHELL, APP_START, APP_STATUS, APP_STOP, APP_UPDATE, APP_INSTALL, IpcResponse,
+  TERMINAL_CLOSE, TERMINAL_INIT, TERMINAL_INPUT, TERMINAL_LOGS, TERMINAL_RESIZE,
+} from '../../src/shared/channel-types';
+import { Application, LifecycleActionRun } from '../../src/types/api';
 import { LogService } from './LogService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
 import { DbStoreService } from './DbStoreService';
@@ -75,14 +78,36 @@ export class AppService implements Service {
 
   async shutdown() {
     this.getLogger().info('Shutting down', this.name);
-    const apps = await this.listApps();
-    for (const app of apps) {
-      this.stopApp(app);
-    }
     for (const session of this.ptySessions.values()) {
       session.kill();
     }
     this.ptySessions.clear();
+  }
+
+  private async getUniqueApps(): Promise<Application[]> {
+    const store = this.getDBStore();
+    const apps = await store.list() as Application[];
+    const unique = new Map<string, Application>();
+    for (const app of apps) {
+      const key = app.catalogId || app.id;
+      const current = unique.get(key);
+      if (!current) {
+        unique.set(key, app);
+        continue;
+      }
+
+      const rank = (candidate: Application) =>
+        Number(candidate.install?.installed) * 2 + Number(!!candidate.task) + Number(!!candidate.lanNasConfig);
+      if (rank(app) > rank(current)) {
+        unique.set(key, app);
+      }
+    }
+
+    if (unique.size !== apps.length) {
+      await store.replaceAll([...unique.values()]);
+      this.getLogger().warn(`Removed ${apps.length - unique.size} duplicate installed app record(s).`, this.name);
+    }
+    return [...unique.values()];
   }
 
   async installApp(app: Application, event?: any): Promise<IpcResponse<any>> {
@@ -90,11 +115,20 @@ export class AppService implements Service {
     return pkg.install(app, event);
   }
 
-  listApps(): Promise<Application[]> {
-    return this.getDBStore().list();
+  async listApps(): Promise<Application[]> {
+    return this.getUniqueApps();
   }
 
-  createApp(app: Application) {
+  async getAppByCatalogId(catalogId: string): Promise<Application | undefined> {
+    return (await this.getUniqueApps()).find((app) => app.catalogId === catalogId || app.id === catalogId);
+  }
+
+  async createApp(app: Application): Promise<string> {
+    const catalogId = app.catalogId;
+    if (catalogId) {
+      const existing = await this.getAppByCatalogId(catalogId);
+      if (existing) return existing.id;
+    }
     this.getAppHomeDir(app);
     this.getAppPackageDir(app);
     this.getAppUserdataDir(app);
@@ -164,9 +198,13 @@ export class AppService implements Service {
       if (!app) throw new Error(`Application ${id} not found`);
       try {
         await this.startApp(app);
+        const lifecycleRuns = [{
+          hook: 'postInstallActions' as const,
+          results: await this.getRuntimeService().runAppLifecycleActions(app, 'postInstallActions'),
+        }];
         // Persist both task status and potential installation updates (e.g. loaded image names)
         await this.getDBStore().update(id, { task: app.task, install: app.install, error: undefined });
-        return { success: true, data: { task: app.task } };
+        return { success: true, data: { task: app.task, lifecycleRuns } };
       } catch (e: any) {
         this.getLogger().error(`Failed to start app ${id}: ${e.message}`, 'AppService');
         await this.getDBStore().update(id, { task: app.task, error: e.message });
@@ -178,9 +216,12 @@ export class AppService implements Service {
       const app = await this.getAppById(id);
       if (!app) throw new Error(`Application ${id} not found`);
       try {
-        await this.stopApp(app);
+        const lifecycleRuns = [{
+          hook: 'postStopActions' as const,
+          results: await this.stopApp(app),
+        }];
         await this.getDBStore().update(id, { task: app.task });
-        return { success: true };
+        return { success: true, data: { lifecycleRuns } };
       } catch (e: any) {
         this.getLogger().error(`Failed to stop app ${id}: ${e.message}`, 'AppService');
         await this.getDBStore().update(id, { task: app.task});
@@ -193,9 +234,20 @@ export class AppService implements Service {
       const pkg = new Package();
       const app = await this.getAppById(id);
       if (!app) throw new Error(`Application ${id} not found`);
+      const lifecycleRuns: LifecycleActionRun[] = [];
+      if (app.task?.id) {
+        lifecycleRuns.push({
+          hook: 'postStopActions' as const,
+          results: await this.stopApp(app),
+        });
+      }
+      lifecycleRuns.push({
+        hook: 'postUnInstallActions' as const,
+        results: await this.getRuntimeService().runAppLifecycleActions(app, 'postUnInstallActions'),
+      });
       await pkg.uninstall(app);
       await this.getDBStore().delete(id);
-      return { success: true };
+      return { success: true, data: { lifecycleRuns } };
     });
 
     ipcMain.handle(APP_STATUS, async (_event, id: string) => {
@@ -250,9 +302,10 @@ export class AppService implements Service {
       return this.openInteractiveShell(app);
     });
 
-    ipcMain.handle('terminal:init', async (event, id: string) => {
+    ipcMain.handle(TERMINAL_INIT, async (event, id: string) => {
       const app = await this.getAppById(id);
       if (!app) throw new Error('App not found');
+      if (!app.task?.id || app.task.status !== 'running') throw new Error('The application container is not running.');
 
       if (this.ptySessions.has(id)) {
         this.ptySessions.get(id)?.kill();
@@ -268,16 +321,20 @@ export class AppService implements Service {
       });
 
       ptyProcess.onData((data) => {
-        event.sender.send(`terminal:output:${id}`, data);
+        if (!event.sender.isDestroyed()) event.sender.send(`terminal:output:${id}`, data);
+      });
+      ptyProcess.onExit(() => {
+        if (this.ptySessions.get(id) === ptyProcess) this.ptySessions.delete(id);
       });
 
       this.ptySessions.set(id, ptyProcess);
       return { success: true };
     });
 
-    ipcMain.handle('terminal:logs', async (event, id: string) => {
+    ipcMain.handle(TERMINAL_LOGS, async (event, id: string) => {
       const app = await this.getAppById(id);
       if (!app) throw new Error('App not found');
+      if (!app.task?.id || app.task.status !== 'running') throw new Error('The application container is not running.');
 
       const logSessionId = `${id}:logs`;
       if (this.ptySessions.has(logSessionId)) {
@@ -294,19 +351,30 @@ export class AppService implements Service {
       });
 
       ptyProcess.onData((data) => {
-        event.sender.send(`terminal:output:${logSessionId}`, data);
+        if (!event.sender.isDestroyed()) event.sender.send(`terminal:output:${logSessionId}`, data);
+      });
+      ptyProcess.onExit(() => {
+        if (this.ptySessions.get(logSessionId) === ptyProcess) this.ptySessions.delete(logSessionId);
       });
 
       this.ptySessions.set(logSessionId, ptyProcess);
       return { success: true };
     });
 
-    ipcMain.handle('terminal:input', async (_event, { id, data }) => {
+    ipcMain.handle(TERMINAL_INPUT, async (_event, { id, data }) => {
       this.ptySessions.get(id)?.write(data);
     });
 
-    ipcMain.handle('terminal:resize', async (_event, { id, cols, rows }) => {
+    ipcMain.handle(TERMINAL_RESIZE, async (_event, { id, cols, rows }) => {
       this.ptySessions.get(id)?.resize(cols, rows);
+    });
+
+    ipcMain.handle(TERMINAL_CLOSE, async (_event, id: string) => {
+      const session = this.ptySessions.get(id);
+      if (session) {
+        this.ptySessions.delete(id);
+        session.kill();
+      }
     });
 
     ipcMain.handle(APP_UPDATE, async (_event, data: { id: string; config: Record<string, unknown> }) => {

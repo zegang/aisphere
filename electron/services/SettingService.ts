@@ -74,6 +74,11 @@ export class SettingService implements Service {
     }
   }
 
+  async getValue(key: string): Promise<string | undefined> {
+    const records = await this.getDBStore().getBy<SettingRecord>({ key });
+    return records[0]?.value;
+  }
+
   private setupHandlers() {
     ipcMain.handle(SETTING_LIST, async () => {
       const records = await this.getDBStore().list();

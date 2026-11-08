@@ -3,6 +3,7 @@ import { join, basename } from 'path';
 import { createHash } from 'crypto';
 import axios from 'axios';
 import { LogService } from '../services/LogService';
+import { AppInstallControl } from './app-install-control';
 
 export interface ChecksumOptions {
   algorithm: 'md5' | 'sha1' | 'sha256';
@@ -20,6 +21,8 @@ export interface DownloadOptions {
   onError?: (url: string, error: string) => void;
   /** AbortSignal to cancel downloads. */
   signal?: AbortSignal;
+  /** Pauses the active network stream and blocks the next install step. */
+  control?: AppInstallControl;
   /** Optional checksum verification. */
   checksum?: ChecksumOptions;
 }
@@ -173,21 +176,35 @@ export class Downloader {
 
     const response = await axios({ method: 'get', url: url, responseType: 'stream', signal: options?.signal });
     const totalBytes = parseInt(String(response.headers['content-length'] ?? '0'), 10) || 0;
+    const removePauseListener = options?.control?.onPauseChange((paused) => {
+      if (paused) response.data.pause();
+      else response.data.resume();
+    });
 
     response.data.on('data', (chunk: Buffer) => {
       downloadedBytes += chunk.length;
       options?.onProgress?.({ url, filePath, downloadedBytes, totalBytes });
     });
 
-    await new Promise<void>((resolve, reject) => {
-      response.data.pipe(writer);
-      writer.on('finish', () => resolve());
-      writer.on('error', reject);
-      options?.signal?.addEventListener('abort', () => {
-        writer.destroy();
-        reject(new Error('Download aborted'));
+    let rejectDownload: (error: Error) => void = () => undefined;
+    const onAbort = () => {
+      writer.destroy();
+      rejectDownload(new Error('Download aborted'));
+    };
+    try {
+      await new Promise<void>((resolve, reject) => {
+        rejectDownload = reject;
+        response.data.pipe(writer);
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+        options?.signal?.addEventListener('abort', onAbort, { once: true });
+        if (options?.signal?.aborted) onAbort();
       });
-    });
+      await options?.control?.waitUntilResumed();
+    } finally {
+      removePauseListener?.();
+      options?.signal?.removeEventListener('abort', onAbort);
+    }
 
     options?.onComplete?.(url, filePath);
     return { url, filePath, success: true };

@@ -5,7 +5,7 @@ import { execFile, spawn } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, promises as fs } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import * as pty from 'node-pty';
-import { Application, AppRuntime } from '../../src/types/api';
+import { Application, AppRuntime, LifecycleAction, LifecycleActionHooks, LifecycleActionResult, LifecycleActionRun } from '../../src/types/api';
 import { LogService } from './LogService';
 import { RuntimeApptainer, RuntimePodman, RuntimeConda, RuntimeDocker, RuntimeClass, Runtime, Task } from '../utils/runtime';
 import { Service, ServiceName } from '../types/IService';
@@ -15,9 +15,12 @@ import { Downloader } from '../utils/downloader';
 import { getDataPath } from '../utils/app-paths';
 import { compressDirectory, extractArchive, fileStamp, collectSpecJsonFiles } from '../utils/spec-io';
 import { getBuiltInRuntimeConfig, getBuiltInRuntimeInstall } from '../utils/builtin-runtimes';
+import { LifecycleActionRunner } from '../utils/lifecycle-actions';
+import type { AppInstallControl } from '../utils/app-install-control';
 import { DbStoreService } from './DbStoreService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
 import { NAMESPACE_DEFAULT, MODULE_APP, MODULE_SETTING } from '../../src/shared/modules';
+import { DOCKER_REGISTRY_MIRRORS, SettingKey } from '../../src/shared/types';
 import {
   ENGINE_CHAT,
   ENGINE_CHAT_STREAM,
@@ -47,6 +50,8 @@ import {
   runtimeInstallOutputChannel,
   runtimeInstallStatusChannel,
 } from '../../src/shared/channel-types';
+import type { AppShutdownProgressEvent } from '../../src/shared/channel-types';
+import type { ExploreService } from './ExploreService';
 
 const SUPPORTED_RUNTIMES: RuntimeKind[] = ['docker', 'podman', 'apptainer', 'conda'];
 
@@ -83,20 +88,196 @@ export class RuntimeService implements Service {
   name = ServiceName.RuntimeService;
   protected runtimes: Partial<Record<RuntimeClass, Runtime>>;
   protected tasks: Record<string, Task>;
+  private shutdownDecision: 'always' | 'never' | null = null;
   private installSessions: Map<string, RuntimeInstallSession> = new Map();
   /**
    * Last known status per runtime. Kept after the install finishes so a page
    * that is opened later can still show what happened.
    */
   private installStates: Map<string, RuntimeInstallStatusEvent> = new Map();
+  private shutdownProgressHandler?: (progress: AppShutdownProgressEvent) => void;
 
   constructor() {
     this.runtimes = {};
     this.tasks = {};
   }
 
+  async getShutdownPreference(): Promise<'ask' | 'always' | 'never'> {
+    const store = this.getSettingStore();
+    const records = await store.getBy<{ id: string; key: string; value: string }>({
+      key: SettingKey.StopRuntimesOnExit,
+    });
+    const value = records[0]?.value;
+    const preference = value === 'never' || value === 'false'
+      ? 'never'
+      : value === 'ask'
+        ? 'ask'
+        : 'always';
+    if ((value === 'true' || value === 'false') && records[0]) {
+      await store.update(records[0].id, { ...records[0], value: preference });
+    }
+    return preference;
+  }
+
+  setShutdownDecision(decision: 'always' | 'never'): void {
+    this.shutdownDecision = decision;
+  }
+
+  setShutdownProgressHandler(handler: (progress: AppShutdownProgressEvent) => void): void {
+    this.shutdownProgressHandler = handler;
+  }
+
+  async getShutdownStatus(): Promise<{ apps: string[]; runtimes: string[]; installs: string[] }> {
+    await this.refreshPersistedApplicationStatuses();
+    const apps = (await this.getAppStore().list()) as Application[];
+    const runningApps = apps
+      .filter((app) => ['running', 'paused', 'starting', 'pausing', 'stopping'].includes(app.task?.status ?? ''))
+      .map((app) => app.name);
+    const runningRuntimes: string[] = [];
+
+    for (const type of ['docker', 'podman'] as const) {
+      const status = await this.getEngineStatus(type);
+      if (status.installed && status.managed && status.running) runningRuntimes.push(runtimeLabel(type));
+    }
+
+    const activeInstalls = ServiceContainer.getInstance()
+      .get<ExploreService>(ServiceName.ExploreService)
+      .getActiveInstallationNames();
+
+    return { apps: runningApps, runtimes: runningRuntimes, installs: activeInstalls };
+  }
+
+  async refreshPersistedApplicationStatuses(): Promise<void> {
+    const store = this.getAppStore();
+    const apps = (await store.list()) as Application[];
+    for (const app of apps.filter((candidate) => candidate.task?.id)) {
+      const task = { ...app.task!, app } as Task;
+      try {
+        const status = await this.getRuntime(task.rc).status(task);
+        if (status === 'unknown') {
+          await store.update(app.id, { ...app, task: undefined });
+        } else {
+          await store.update(app.id, {
+            ...app,
+            task: { ...app.task, status, hostPorts: task.hostPorts },
+          });
+        }
+      } catch (error) {
+        this.getLogger().warn(
+          `Could not refresh ${app.name} status at startup: ${error instanceof Error ? error.message : String(error)}`,
+          this.name,
+        );
+      }
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    const decision = this.shutdownDecision ?? (
+      (await this.getShutdownPreference()) === 'never' ? 'never' : 'always'
+    );
+    if (decision === 'never') {
+      this.getLogger().info('Leaving running applications and runtimes active on exit.', this.name);
+      return;
+    }
+
+    this.getLogger().info('Stopping running applications and managed runtime engines before exit.', this.name);
+    const apps = await this.getAppStore().list() as Application[];
+    const activeApps = apps.filter((candidate) =>
+      candidate.task?.id &&
+      ['running', 'paused', 'starting', 'pausing', 'stopping'].includes(candidate.task.status)
+    );
+    const activeRuntimes: RuntimeKind[] = [];
+    for (const type of ['docker', 'podman'] as const) {
+      const status = await this.getEngineStatus(type);
+      if (status.installed && status.managed && status.running) activeRuntimes.push(type);
+    }
+
+    const total = activeApps.length + activeRuntimes.length;
+    let current = 0;
+    this.shutdownProgressHandler?.({ phase: 'preparing', current, total });
+    for (const app of activeApps) {
+      this.shutdownProgressHandler?.({ phase: 'stopping-app', current, total, name: app.name });
+      try {
+        await this.stop(app);
+        await this.getAppStore().update(app.id, { ...app, task: undefined });
+      } catch (error) {
+        this.getLogger().error(
+          `Failed to stop ${app.name} before exit: ${error instanceof Error ? error.message : String(error)}`,
+          this.name,
+        );
+      }
+      current += 1;
+      this.shutdownProgressHandler?.({ phase: 'stopping-app', current, total, name: app.name });
+    }
+
+    for (const type of activeRuntimes) {
+      this.shutdownProgressHandler?.({ phase: 'stopping-runtime', current, total, name: runtimeLabel(type) });
+      try {
+        await this.stopEngine(type);
+      } catch (error) {
+        this.getLogger().error(
+          `Failed to stop the managed ${runtimeLabel(type)} engine before exit: ${error instanceof Error ? error.message : String(error)}`,
+          this.name,
+        );
+      }
+      current += 1;
+      this.shutdownProgressHandler?.({ phase: 'stopping-runtime', current, total, name: runtimeLabel(type) });
+    }
+    this.shutdownProgressHandler?.({ phase: 'completed', current: total, total });
+  }
+
   private getLogger() {
     return ServiceContainer.getInstance().get(ServiceName.LogService) as LogService;
+  }
+
+  async runLifecycleActions(
+    actions: LifecycleAction[] | undefined,
+    context: { ownerName: string; getDockerLogs?: (tailLines: number) => Promise<string> },
+  ): Promise<LifecycleActionResult[]> {
+    const runner = new LifecycleActionRunner(
+      ServiceContainer.getInstance().get<SandboxService>(ServiceName.SandboxService),
+      this.getLogger(),
+    );
+    return runner.run(actions, context);
+  }
+
+  async runAppLifecycleActions(
+    app: Application,
+    hook: 'postInstallActions' | 'postStopActions' | 'postUnInstallActions',
+  ): Promise<LifecycleActionResult[]> {
+    const actions = app[hook];
+    return this.runLifecycleActions(actions, {
+      ownerName: app.name,
+      getDockerLogs: app.task?.id && app.runtime.runtime === 'docker'
+        ? async (tailLines) => {
+            let output = '';
+            const config = this.getRuntimeForApp(app).getLogsConfig(this.getLiveTask(app));
+            await ServiceContainer.getInstance().get<SandboxService>(ServiceName.SandboxService).runCommand(
+              config.command,
+              ['logs', '--tail', String(tailLines), app.task!.id],
+              {
+                cwd: app.apphomedir || process.cwd(),
+                shell: false,
+                onLog: (chunk) => { output += chunk; },
+              },
+            );
+            return output;
+          }
+        : undefined,
+    });
+  }
+
+  private async runRuntimeLifecycleActions(
+    type: RuntimeKind,
+    hook: 'postInstallActions' | 'postStopActions' | 'postUnInstallActions',
+    emit?: (data: string) => void,
+  ): Promise<LifecycleActionRun> {
+    const config = getBuiltInRuntimeConfig(type);
+    const results = await this.runLifecycleActions(config?.[hook], { ownerName: runtimeLabel(type) });
+    for (const result of results) {
+      emit?.(`Lifecycle action ${result.id} ${result.status}: ${result.message}\r\n`);
+    }
+    return { hook, results };
   }
 
   private getSandbox() {
@@ -198,13 +379,13 @@ export class RuntimeService implements Service {
         emit(`Runtime : ${type}\r\n`);
         emit(`Folder  : ${getDataPath('runtimes', type)}\r\n\r\n`);
 
-        await this.uninstallRuntime(type as RuntimeKind, emit);
+        const lifecycleRuns = await this.uninstallRuntime(type as RuntimeKind, emit);
 
         this.registerRuntimePaths();
         this.installStates.delete(type);
         emit(`\r\n\x1b[1;32m${runtimeLabel(type)} was uninstalled.\x1b[0m\r\n`);
         sendStatus('completed', { message: `${runtimeLabel(type)} uninstalled` });
-        return { success: true };
+        return { success: true, data: { lifecycleRuns } };
       } catch (error: any) {
         const message = error?.message || String(error);
         this.getLogger().error(`Failed to uninstall ${type}: ${message}`, this.name);
@@ -261,7 +442,7 @@ export class RuntimeService implements Service {
         emit(`Downloads: ${downloadsDir}\r\n`);
         emit(`Install  : ${runtimeDir}\r\n\r\n`);
 
-        await this.installRuntime({
+        const lifecycleRuns = await this.installRuntime({
           type,
           platform: os.platform(),
           arch: os.arch(),
@@ -274,7 +455,7 @@ export class RuntimeService implements Service {
         this.registerRuntimePaths();
         emit(`\r\n\x1b[1;32mInstallation of ${type} completed successfully.\x1b[0m\r\n`);
         sendStatus('completed', { message: `${type} installed successfully` });
-        return { success: true };
+        return { success: true, data: { lifecycleRuns } };
       } catch (e: any) {
         const message = e?.message || String(e);
         if (session.controller.signal.aborted || message === 'Command aborted' || message === 'Installation aborted') {
@@ -412,6 +593,10 @@ export class RuntimeService implements Service {
       return managed;
     }
     return type;
+  }
+
+  getRuntimeBin(type: RuntimeKind): string {
+    return this.resolveRuntimeBin(type);
   }
 
   /** Checks whether the CLI exists and whether its daemon is answering. */
@@ -556,10 +741,10 @@ export class RuntimeService implements Service {
     throw new Error(`Timed out waiting for ${label} to start. Open ${label} manually and try again.`);
   }
 
-  private engineStops: Map<string, Promise<RuntimeEngineStatus>> = new Map();
+  private engineStops: Map<string, Promise<RuntimeEngineStatus & { lifecycleRuns?: LifecycleActionRun[] }>> = new Map();
 
   /** Stops the runtime engine (Docker Desktop / Podman machine) and waits for it. */
-  private stopEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+  private stopEngine(type: RuntimeKind): Promise<RuntimeEngineStatus & { lifecycleRuns?: LifecycleActionRun[] }> {
     const current = this.engineStops.get(type);
     if (current) return current;
     const stopping = this.doStopEngine(type).finally(() => this.engineStops.delete(type));
@@ -567,7 +752,7 @@ export class RuntimeService implements Service {
     return stopping;
   }
 
-  private async doStopEngine(type: RuntimeKind): Promise<RuntimeEngineStatus> {
+  private async doStopEngine(type: RuntimeKind): Promise<RuntimeEngineStatus & { lifecycleRuns?: LifecycleActionRun[] }> {
     const label = runtimeLabel(type);
     const status = await this.getEngineStatus(type);
     if (!status.installed) {
@@ -576,7 +761,10 @@ export class RuntimeService implements Service {
     if (type === 'conda' || type === 'apptainer') {
       throw new Error(`${label} does not have a background engine to stop.`);
     }
-    if (!status.running) return status;
+    if (!status.running) {
+      const lifecycleRuns = [await this.runRuntimeLifecycleActions(type, 'postStopActions')];
+      return { ...status, lifecycleRuns };
+    }
 
     if (type === 'docker') {
       try {
@@ -606,7 +794,8 @@ export class RuntimeService implements Service {
           await this.stopProcessesUnder(this.getRuntimeDir('docker'), () => undefined);
         }
         this.getLogger().info(`${label} engine stopped.`, this.name);
-        return { ...next, running: false };
+        const lifecycleRuns = [await this.runRuntimeLifecycleActions(type, 'postStopActions')];
+        return { ...next, running: false, lifecycleRuns };
       }
     }
 
@@ -808,7 +997,7 @@ export class RuntimeService implements Service {
     process.env[pathKey] = kept.join(delimiter);
   }
 
-  private async uninstallRuntime(type: RuntimeKind, emit: (data: string) => void): Promise<void> {
+  private async uninstallRuntime(type: RuntimeKind, emit: (data: string) => void): Promise<LifecycleActionRun[]> {
     const label = runtimeLabel(type);
     const runtimeDir = this.getRuntimeDir(type);
 
@@ -842,11 +1031,14 @@ export class RuntimeService implements Service {
       }
     }
 
+    const lifecycleRuns = [await this.runRuntimeLifecycleActions(type, 'postStopActions', emit)];
     await this.removeUninstallRegistrations(runtimeDir, emit);
     await this.removeDirectory(runtimeDir, emit);
     this.removeRuntimePaths(runtimeDir);
     this.runtimeBins.delete(type);
+    lifecycleRuns.push(await this.runRuntimeLifecycleActions(type, 'postUnInstallActions', emit));
     emit(`Removed ${runtimeDir}\r\n`);
+    return lifecycleRuns;
   }
 
   private async installRuntime(options: {
@@ -857,18 +1049,18 @@ export class RuntimeService implements Service {
     runtimeDir: string;
     session: RuntimeInstallSession;
     emit: (data: string) => void;
-  }): Promise<void> {
+  }): Promise<LifecycleActionRun[]> {
     const { type, platform, arch, downloadsDir, runtimeDir, session, emit } = options;
     if (platform === 'win32') {
-      return this.installWindowsRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
+      await this.installWindowsRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
+    } else if (platform === 'darwin') {
+      await this.installMacRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
+    } else if (platform === 'linux') {
+      await this.installLinuxRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
+    } else {
+      throw new Error(`Runtime installation is not supported on ${platform}.`);
     }
-    if (platform === 'darwin') {
-      return this.installMacRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
-    }
-    if (platform === 'linux') {
-      return this.installLinuxRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
-    }
-    throw new Error(`Runtime installation is not supported on ${platform}.`);
+    return [await this.runRuntimeLifecycleActions(type as RuntimeKind, 'postInstallActions', emit)];
   }
 
   private async installWindowsRuntime(
@@ -1331,12 +1523,12 @@ export class RuntimeService implements Service {
     return this.runtimes[rc]!;
   }
 
-  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const rc = (app.runtime as any)?.runtime as RuntimeClass;
     if (!rc) {
       throw new Error(`Application ${app.name} does not specify a valid runtime type.`);
     }
-    return this.getRuntime(rc).install(app, event);
+    return this.getRuntime(rc).install(app, event, control);
   }
 
   async run(app: Application): Promise<Task> {
@@ -1431,19 +1623,18 @@ export class RuntimeService implements Service {
   }
 
   // Stop all tasks in the application
-  async stop(app: Application): Promise<void> {
+  async stop(app: Application): Promise<LifecycleActionResult[]> {
     const taskId = app.task?.id;
-    if (!taskId) return;
-
-    const task = this.tasks[taskId];
-    if (task) {
+    if (taskId) {
+      const task = this.tasks[taskId] ?? { ...app.task, app } as Task;
       this.getLogger().info(`Stopping task ${taskId} of application ${app.name}`, this.name);
       await this.getRuntime(task.rc).stop(task);
       delete this.tasks[taskId];
-    }
 
-    // Clear the task reference from the application object
-    app.task = undefined;
+      // Clear the task reference from the application object
+      app.task = undefined;
+    }
+    return this.runAppLifecycleActions(app, 'postStopActions');
   }
 
   getShellConfig(app: Application): { command: string; args: string[] } {
@@ -1709,7 +1900,10 @@ export class RuntimeService implements Service {
 
       // The engine ignored `stream: true` (older servers): deliver the whole
       // answer in one delta so the UI still follows the streaming path.
-      if (streaming) onDelta?.({ delta: content });
+      if (streaming) {
+        if (reasoning) onDelta?.({ reasoning });
+        onDelta?.({ delta: content });
+      }
 
       this.getLogger().info(`Engine chat answered via ${baseUrl} with model ${(payload?.model ?? modelFile) || 'unknown'}`, this.name);
       return {
@@ -1754,6 +1948,24 @@ export class RuntimeService implements Service {
     }));
   }
 
+  async isRuntimeInstalled(type: RuntimeKind): Promise<boolean> {
+    this.registerRuntimePaths();
+    const runtime = (await this.probeRuntimes()).find((item) => item.type === type);
+    return !!runtime?.installed;
+  }
+
+  async getDockerRegistryMirror(): Promise<string | undefined> {
+    const records = await this.getSettingStore().getBy<{ id: string; key: string; value: string }>({
+      key: SettingKey.DockerRegistryMirror,
+    });
+    const mirror = records[0]?.value;
+    if (!mirror) return undefined;
+    if ((DOCKER_REGISTRY_MIRRORS as readonly string[]).includes(mirror)) return mirror;
+
+    this.getLogger().warn(`Ignoring unsupported Docker registry mirror setting: ${mirror}`, this.name);
+    return undefined;
+  }
+
   /** Current autoStart preference of a runtime ('always' | 'never' | null). */
   private async readRuntimeAutoStart(type: RuntimeKind): Promise<'always' | 'never' | null> {
     const records = await this.getSettingStore().getBy<{ id: string; key: string; value: string }>({ key: `runtime.autoStart.${type}` });
@@ -1795,6 +2007,7 @@ export class RuntimeService implements Service {
         name: builtin?.name ?? runtimeLabel(type),
         hasEngine: builtin?.hasEngine ?? (type === 'docker' || type === 'podman'),
         autoStart: (await this.readRuntimeAutoStart(type)) ?? builtin?.autoStart ?? null,
+        dockerRegistryMirror: type === 'docker' ? (await this.getDockerRegistryMirror()) ?? null : undefined,
         installed: !!probe?.installed,
         managed: !!probe?.managed,
         version: probe?.version,
@@ -1926,6 +2139,9 @@ export class RuntimeService implements Service {
         }
         seen.add(spec.type);
         await this.writeRuntimeAutoStart(spec.type, spec.autoStart);
+        if (spec.type === 'docker' && spec.dockerRegistryMirror !== undefined) {
+          await this.writeDockerRegistryMirror(spec.dockerRegistryMirror);
+        }
         imported.push({ type: spec.type, name: spec.name, autoStart: spec.autoStart });
         this.getLogger().info(`Imported runtime configuration for ${spec.type}: autoStart=${spec.autoStart ?? 'unset'}`, this.name);
       }
@@ -1949,14 +2165,35 @@ export class RuntimeService implements Service {
     if (obj.autoStart !== undefined && obj.autoStart !== null && obj.autoStart !== 'unset' && autoStart === null) {
       return null; // invalid non-empty autoStart value
     }
+    if (
+      type === 'docker' &&
+      obj.dockerRegistryMirror !== undefined &&
+      obj.dockerRegistryMirror !== null &&
+      !(DOCKER_REGISTRY_MIRRORS as readonly unknown[]).includes(obj.dockerRegistryMirror)
+    ) {
+      return null;
+    }
     return {
       type,
       name: String(obj.name ?? runtimeLabel(type)),
       hasEngine: obj.hasEngine !== undefined ? !!obj.hasEngine : type === 'docker' || type === 'podman',
       autoStart: autoStart as 'always' | 'never' | null,
+      dockerRegistryMirror: type === 'docker' ? obj.dockerRegistryMirror ?? null : undefined,
       installed: !!obj.installed,
       managed: !!obj.managed,
       version: obj.version !== undefined ? String(obj.version) : undefined,
     };
+  }
+
+  private async writeDockerRegistryMirror(mirror: string | null): Promise<void> {
+    const store = this.getSettingStore();
+    const key = SettingKey.DockerRegistryMirror;
+    const records = await store.getBy<{ id: string; key: string; value: string }>({ key });
+    const value = mirror ?? '';
+    if (records.length > 0) {
+      await store.update(records[0].id, { ...records[0], key, value });
+    } else {
+      await store.insert({ key, value });
+    }
   }
 }

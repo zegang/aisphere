@@ -38,7 +38,7 @@ export class SandboxService implements Service {
     return this.runCommand(command, finalArgs, options);
   }
 
-  runCommand(command: string, args: string[], options: { cwd?: string, onLog?: (data: string) => void, onInteraction?: (prompt: string) => Promise<string>, signal?: AbortSignal }): Promise<number> {
+  runCommand(command: string, args: string[], options: { cwd?: string, onLog?: (data: string) => void, onInteraction?: (prompt: string) => Promise<string>, signal?: AbortSignal, includeErrorOutput?: boolean, shell?: boolean }): Promise<number> {
     const argsString = args.join(' ');
     const fullCommand = `${command} ${argsString}`;
     const optionParts = [];
@@ -49,6 +49,7 @@ export class SandboxService implements Service {
 
     return new Promise((resolve, reject) => {
       let settled = false;
+      let stderrOutput = '';
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
@@ -57,7 +58,7 @@ export class SandboxService implements Service {
 
       const child = spawn(command, args, {
         cwd: options.cwd,
-        shell: true
+        shell: options.shell ?? true,
       });
 
       const onAbort = () => {
@@ -70,9 +71,12 @@ export class SandboxService implements Service {
         options.signal.addEventListener('abort', onAbort);
       }
 
-      const handleData = async (data: Buffer) => {
+      const handleData = async (data: Buffer, isStderr: boolean) => {
         const output = data.toString();
         options.onLog?.(output);
+        if (isStderr && options.includeErrorOutput) {
+          stderrOutput = (stderrOutput + output).slice(-2000);
+        }
 
         // Detect common interactive prompts (password or [Y/n])
         const isPrompt = /password|\[Y\/n\]|confirm/i.test(output) && !output.includes('\n');
@@ -86,8 +90,8 @@ export class SandboxService implements Service {
         }
       };
 
-      child.stdout.on('data', handleData);
-      child.stderr.on('data', handleData);
+      child.stdout.on('data', (data: Buffer) => handleData(data, false));
+      child.stderr.on('data', (data: Buffer) => handleData(data, true));
 
       // Without this handler a spawn failure (for example an invalid cwd)
       // emits 'error' and the promise would never settle.
@@ -104,7 +108,10 @@ export class SandboxService implements Service {
         }
         finish(() => {
           if (code === 0) resolve(code);
-          else reject(new Error(`Command failed with code ${code}`));
+          else {
+            const detail = stderrOutput.replace(/\x1b\[[0-9;]*m/g, '').trim();
+            reject(new Error(`Command failed with code ${code}${detail ? `: ${detail}` : ''}`));
+          }
         });
       });
     });

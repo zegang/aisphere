@@ -1,0 +1,47 @@
+{
+  "name": "File Browser NAS",
+  "kind": "app",
+  "image": "filebrowser/filebrowser:latest",
+  "hostPort": 8093,
+  "containerPort": 80,
+  "notes": "Browse and upload files at http://127.0.0.1:8093 after the container is running. Files are stored in the AiSphere app userdata folder.",
+  "postInstallActions": [
+    {
+      "id": "credentials",
+      "type": "docker-log-credentials",
+      "patterns": ["user", "password", "credential"],
+      "tailLines": 200
+    },
+    {
+      "id": "windows-firewall",
+      "type": "windows-firewall",
+      "operation": "ensure",
+      "port": 8093,
+      "ruleName": "AiSphere File Browser NAS (TCP 8093)",
+      "profile": "private",
+      "remoteAddress": "localsubnet"
+    }
+  ],
+  "postStopActions": [
+    {
+      "id": "remove-windows-firewall-rule",
+      "type": "windows-firewall",
+      "operation": "remove",
+      "port": 8093,
+      "ruleName": "AiSphere File Browser NAS (TCP 8093)",
+      "profile": "private",
+      "remoteAddress": "localsubnet"
+    }
+  ],
+  "postUnInstallActions": [
+    {
+      "id": "remove-windows-firewall-rule",
+      "type": "windows-firewall",
+      "operation": "remove",
+      "port": 8093,
+      "ruleName": "AiSphere File Browser NAS (TCP 8093)",
+      "profile": "private",
+      "remoteAddress": "localsubnet"
+    }
+  ]
+}

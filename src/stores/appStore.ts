@@ -14,7 +14,8 @@ import {
   SETTING_GET,
   SETTING_UPDATE,
 } from '@/shared/channel-types';
-import { Application, AppTask } from '@/types/api';
+import { Application, LifecycleActionResult, AppTask } from '@/types/api';
+import { useLifecycleHistoryStore } from '@/stores/lifecycleHistoryStore';
 
 /** Dialog shown when an app needs a runtime whose engine is not running. */
 export interface RuntimeStartPrompt {
@@ -58,6 +59,8 @@ interface AppStore {
 
   // Application Data & Lifecycle
   applications: Application[];
+  lifecycleResultsByAppId: Record<string, LifecycleActionResult[]>;
+  dismissLifecycleResults: (id: string) => void;
   isLoading: boolean;
   /** Pending "runtime is not running" dialog, if any. */
   runtimePrompt: RuntimeStartPrompt | null;
@@ -67,8 +70,8 @@ interface AppStore {
   confirmRuntimeStart: (remember: boolean) => Promise<void>;
   cancelRuntimeStart: (remember: boolean) => Promise<void>;
   dismissRuntimePrompt: () => void;
-  stopApplication: (id: string) => Promise<void>;
-  uninstallApplication: (id: string) => Promise<boolean>;
+  stopApplication: (id: string) => Promise<boolean>;
+  uninstallApplication: (id: string, confirmUser?: boolean) => Promise<boolean>;
   openApplicationShell: (id: string) => Promise<void>;
   refreshApplicationStatus: (id: string) => Promise<string>;
   inspectApplication: (id: string) => Promise<any>;
@@ -79,6 +82,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   selectedId: null,
   setSelectedId: (id) => set({ selectedId: id }),
   applications: [],
+  lifecycleResultsByAppId: {},
+  dismissLifecycleResults: (id) => set((state) => {
+    const { [id]: _dismissed, ...remaining } = state.lifecycleResultsByAppId;
+    return { lifecycleResultsByAppId: remaining };
+  }),
   activeTerminalId: null,
   setActiveTerminalId: (id) => set({ activeTerminalId: id }),
   isLoading: false,
@@ -155,12 +163,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   launchApplication: async (id) => {
+    const appName = get().applications.find((app) => app.id === id)?.name ?? id;
     set((state) => ({
       applications: state.applications.map((a) => (a.id === id ? { ...a, task: { ...(a.task || {}), status: 'starting' } as any, error: undefined } : a)),
     }));
     const result = await window.electron.invoke(APP_START, id);
     if (result.success) {
       await get().fetchApplications();
+      const lifecycleRuns = result.data?.lifecycleRuns;
+      useLifecycleHistoryStore.getState().recordRuns('app', id, appName, lifecycleRuns);
+      const lifecycleResults = lifecycleRuns?.flatMap((run) => run.results);
+      if (lifecycleResults?.length) {
+        set((state) => ({
+          lifecycleResultsByAppId: {
+            ...state.lifecycleResultsByAppId,
+            [id]: lifecycleResults,
+          },
+        }));
+      }
     } else {
       set((state) => ({
         applications: state.applications.map((a) =>
@@ -210,22 +230,41 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   stopApplication: async (id) => {
     const app = get().applications.find((a) => a.id === id);
-    if (!app?.task) return;
+    if (!app?.task) return false;
 
     set((state) => ({
       applications: state.applications.map((a) => (a.id === id && a.task ? { ...a, task: { ...a.task, status: 'stopping' } } : a)),
     }));
     const result = await window.electron.invoke(APP_STOP, id);
     if (result.success) {
+      const lifecycleRuns = result.data?.lifecycleRuns;
+      useLifecycleHistoryStore.getState().recordRuns('app', id, app.name, lifecycleRuns);
+      const lifecycleResults = lifecycleRuns?.flatMap((run) => run.results);
+      if (lifecycleResults?.length) {
+        set((state) => ({
+          lifecycleResultsByAppId: {
+            ...state.lifecycleResultsByAppId,
+            [id]: lifecycleResults,
+          },
+        }));
+      }
       await get().fetchApplications();
     }
+    return result.success;
   },
-  uninstallApplication: async (id): Promise<boolean> => {
-    if (!confirm('Are you sure you want to uninstall this application? All data within the app folder will be removed.')) {
+  uninstallApplication: async (id, confirmUser = true): Promise<boolean> => {
+    if (confirmUser && !confirm('Are you sure you want to uninstall this application? All data within the app folder will be removed.')) {
       return false;
     }
     const result = await window.electron.invoke(APP_DELETE, id);
     if (result.success) {
+      const app = get().applications.find((item) => item.id === id);
+      useLifecycleHistoryStore.getState().recordRuns(
+        'app',
+        id,
+        app?.name ?? id,
+        result.data?.lifecycleRuns,
+      );
       await get().fetchApplications();
     }
     return result.success;

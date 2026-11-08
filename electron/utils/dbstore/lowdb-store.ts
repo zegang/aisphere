@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { JSONFilePreset } from 'lowdb/node';
 import { AbstractDataStore } from './abstract-store';
 
@@ -9,7 +9,7 @@ export class LowDbStore extends AbstractDataStore {
   rootpath: string;
   namespace: string;
   module: string;
-  private db: any = null;
+  private dbPromise: Promise<any> | null = null;
   private filePath: string;
 
   constructor(rootpath: string, namespace: string, module: string) {
@@ -21,26 +21,60 @@ export class LowDbStore extends AbstractDataStore {
   }
 
   private async getDb() {
-    if (!this.db) {
-      this.db = await JSONFilePreset<Schema>(this.filePath, {});
-    } else {
-      if (!existsSync(this.filePath)) {
-        this.db.data = {};
-      } else {
-        await this.db.read();
+    if (!this.dbPromise) {
+      this.dbPromise = this.openDb().catch((error) => {
+        this.dbPromise = null;
+        throw error;
+      });
+    }
+    return this.dbPromise;
+  }
+
+  private async openDb() {
+    try {
+      return await JSONFilePreset<Schema>(this.filePath, {});
+    } catch (error) {
+      if (!(error instanceof SyntaxError) || !existsSync(this.filePath)) {
+        throw error;
       }
-    }
 
-    if (this.db.data === null || this.db.data === undefined) {
-      this.db.data = {};
-    }
+      const contents = readFileSync(this.filePath, 'utf8');
+      let recoveredData: Schema | undefined;
+      const position = /position (\d+)/i.exec(error.message);
+      if (position) {
+        try {
+          const parsed: unknown = JSON.parse(contents.slice(0, Number(position[1])).trim());
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            recoveredData = parsed as Schema;
+          }
+        } catch {
+          // Keep the original file as a backup and initialize an empty store.
+        }
+      }
 
-    return this.db;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = `${this.filePath}.corrupt-${timestamp}`;
+      renameSync(this.filePath, backupPath);
+      if (recoveredData) {
+        writeFileSync(this.filePath, `${JSON.stringify(recoveredData, null, 2)}\n`, 'utf8');
+        console.error(`Recovered valid JSON data from ${this.filePath}; preserved the original at ${backupPath}.`, error);
+      } else {
+        console.error(`Invalid database JSON at ${this.filePath}; preserved the original at ${backupPath} and initialized an empty store.`, error);
+      }
+      return JSONFilePreset<Schema>(this.filePath, {});
+    }
   }
 
   async list(): Promise<any[]> {
     const db = await this.getDb();
     return db.data[this.namespace]?.[this.module] || [];
+  }
+
+  async replaceAll<T>(items: T[]): Promise<void> {
+    const db = await this.getDb();
+    if (!db.data[this.namespace]) db.data[this.namespace] = {};
+    db.data[this.namespace][this.module] = items;
+    await db.write();
   }
 
   async get<T>(id: string): Promise<T | undefined> {

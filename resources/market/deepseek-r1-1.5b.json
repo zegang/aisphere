@@ -1,0 +1,7 @@
+{
+  "image": "ghcr.io/ggml-org/llama.cpp:server",
+  "hostPort": 8091,
+  "containerPort": 8080,
+  "contextSize": 8192,
+  "modelUrl": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+}

@@ -7,7 +7,7 @@ import { ExploreService } from './services/ExploreService';
 import { AppService } from './services/AppService';
 import { SettingService } from './services/SettingService';
 import { LogService } from './services/LogService';
-import { UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY } from '../src/shared/channel-types';
+import { APP_SHUTDOWN_PROGRESS, UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY, type AppShutdownProgressEvent } from '../src/shared/channel-types';
 import { SettingKey } from '../src/shared/types';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -17,6 +17,7 @@ import { ServiceContainer } from './services/ServiceContainer';
 import { ServiceName } from './types/IService';
 import { SystemService } from './services/SystemService';
 import { SandboxService } from './services/SandboxService';
+import { LanNasService } from './services/LanNasService';
 import { getDataRootDir } from './utils/app-paths';
 
 if (process.platform === 'linux') {
@@ -30,6 +31,8 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 // Distinguishes "user closed the window" (hide to tray) from "app is quitting".
 let isQuitting = false;
+let shutdownInProgress = false;
+let servicesInitialized = false;
 
 // App directory
 const isDev = !app.isPackaged;
@@ -126,6 +129,10 @@ function createWindow(): void {
   }
 
   mainWindow.on('close', (event) => {
+    if (shutdownInProgress) {
+      event.preventDefault();
+      return;
+    }
     // Closing the window hides the app to the system tray instead of quitting.
     // The tray menu (or a second launch) brings the window back.
     if (!isQuitting) {
@@ -161,7 +168,17 @@ function initServices(): Promise<void> {
   ServiceContainer.getInstance().register(ServiceName.SandboxService, new SandboxService());
   ServiceContainer.getInstance().register(ServiceName.RuntimeService, new RuntimeService());
   ServiceContainer.getInstance().register(ServiceName.AppService, new AppService());
+  ServiceContainer.getInstance().register(ServiceName.LanNasService, new LanNasService());
   ServiceContainer.getInstance().register(ServiceName.ExploreService, new ExploreService());
+  const exploreService = ServiceContainer.getInstance().get<ExploreService>(ServiceName.ExploreService);
+  const runtimeService = ServiceContainer.getInstance().get<RuntimeService>(ServiceName.RuntimeService);
+  const sendShutdownProgress = (progress: AppShutdownProgressEvent) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(APP_SHUTDOWN_PROGRESS, progress);
+    }
+  };
+  runtimeService.setShutdownProgressHandler(sendShutdownProgress);
+  exploreService.setShutdownProgressHandler(sendShutdownProgress);
 
   registerHandlers(ipcMain);
 
@@ -206,7 +223,15 @@ function initServices(): Promise<void> {
 
   // Give the root directory setting a valid default so the settings page shows
   // the real data location instead of an empty or Linux-only placeholder.
-  return settingService.ensureDefault(SettingKey.RootDirectory, getDataRootDir());
+  return Promise.all([
+    settingService.ensureDefault(SettingKey.RootDirectory, getDataRootDir()),
+    settingService.ensureDefault(SettingKey.RuntimeAutoInstall, 'ask'),
+    settingService.ensureDefault(SettingKey.DockerRegistryMirror, ''),
+    settingService.ensureDefault(SettingKey.StopRuntimesOnExit, 'always'),
+  ]).then(async () => {
+    await (ServiceContainer.getInstance().get(ServiceName.RuntimeService) as RuntimeService)
+      .refreshPersistedApplicationStatuses();
+  });
 }
 
 async function shutdownServices(): Promise<void> {
@@ -232,6 +257,7 @@ if (!hasSingleInstanceLock) {
   app.whenReady()
     .then(async () => {
       await initServices();
+      servicesInitialized = true;
       createWindow();
       createTray();
     })
@@ -254,15 +280,117 @@ if (!hasSingleInstanceLock) {
 
 app.on('window-all-closed', () => {
   // The window is normally hidden rather than destroyed, so this only runs
-  // during a real quit (or on macOS). On macOS the app stays in the dock.
+  // during a real quit (or on macOS). On macOS the app stays in the dock and
+  // its runtimes should remain available until the user actually quits.
   if (process.platform !== 'darwin' && isQuitting) {
     app.quit();
-  } else if (process.platform === 'darwin') {
-    shutdownServices();
   }
 });
 
-app.on('before-quit', () => {
+let shutdownPromise: Promise<void> | null = null;
+let shutdownComplete = false;
+
+app.on('before-quit', (event) => {
+  if (shutdownComplete) return;
+
+  event.preventDefault();
   isQuitting = true;
-  shutdownServices();
+  if (!servicesInitialized) {
+    shutdownComplete = true;
+    app.quit();
+    return;
+  }
+  if (shutdownPromise) return;
+
+  shutdownPromise = (async () => {
+    const runtimeService = ServiceContainer.getInstance().get<RuntimeService>(ServiceName.RuntimeService);
+    const preference = await runtimeService.getShutdownPreference();
+    let decision: 'always' | 'never' = preference === 'never' ? 'never' : 'always';
+    let activeResources: { apps: string[]; runtimes: string[]; installs: string[] } | null = null;
+
+    if (preference === 'ask') {
+      activeResources = await runtimeService.getShutdownStatus();
+      if (activeResources.apps.length > 0 || activeResources.runtimes.length > 0 || activeResources.installs.length > 0) {
+        const language = await (ServiceContainer.getInstance().get(ServiceName.SettingService) as SettingService)
+          .getValue(SettingKey.Language);
+        const copy = language === 'zh'
+          ? {
+              title: '退出 AiSphere？',
+              message: '仍有应用或受管理的运行环境正在运行。',
+              apps: '正在运行的应用',
+              runtimes: '正在运行的受管理运行环境',
+              installs: '正在进行的安装',
+              question: '退出前停止它们吗？',
+              stop: '停止并退出',
+              leave: '保持运行并退出',
+              cancel: '取消',
+            }
+          : {
+              title: 'Quit AiSphere?',
+              message: 'Some apps or managed runtimes are still running.',
+              apps: 'Running apps',
+              runtimes: 'Running managed runtimes',
+              installs: 'Active installations (will be cancelled on exit)',
+              question: 'Stop them before quitting?',
+              stop: 'Stop and Quit',
+              leave: 'Leave Running',
+              cancel: 'Cancel',
+            };
+        const description = [
+          activeResources.apps.length > 0 ? `${copy.apps}: ${activeResources.apps.join(', ')}` : '',
+          activeResources.runtimes.length > 0 ? `${copy.runtimes}: ${activeResources.runtimes.join(', ')}` : '',
+          activeResources.installs.length > 0 ? `${copy.installs}: ${activeResources.installs.join(', ')}` : '',
+        ].filter(Boolean).join('\n');
+        const result = await dialog.showMessageBox({
+          type: 'question',
+          title: copy.title,
+          message: copy.message,
+          detail: `${description}\n\n${copy.question}`,
+          buttons: [copy.stop, copy.leave, copy.cancel],
+          defaultId: 0,
+          cancelId: 2,
+          noLink: true,
+        });
+
+        if (result.response === 2) {
+          isQuitting = false;
+          shutdownPromise = null;
+          return;
+        }
+        decision = result.response === 0 ? 'always' : 'never';
+      }
+    }
+
+    runtimeService.setShutdownDecision(decision);
+    const exploreService = ServiceContainer.getInstance().get<ExploreService>(ServiceName.ExploreService);
+    const hasActiveInstalls = exploreService.hasActiveInstallations();
+    if (decision === 'always' || hasActiveInstalls) {
+      shutdownInProgress = true;
+      showMainWindow();
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          window.webContents.send(APP_SHUTDOWN_PROGRESS, {
+            phase: 'preparing',
+            current: 0,
+            total: (activeResources?.apps.length ?? 0) +
+              (activeResources?.runtimes.length ?? 0) +
+              (activeResources?.installs.length ?? 0),
+          });
+        }
+      }
+    }
+    await shutdownServices();
+    shutdownInProgress = false;
+    shutdownComplete = true;
+    app.quit();
+  })().catch((error) => {
+    console.error('AiSphere shutdown failed:', error);
+    isQuitting = false;
+    shutdownInProgress = false;
+    shutdownPromise = null;
+    dialog.showErrorBox(
+      'AiSphere could not quit cleanly',
+      error instanceof Error ? error.message : String(error),
+    );
+  });
 });

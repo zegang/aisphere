@@ -6,8 +6,10 @@ import { ServiceName } from '../types/IService';
 import { SandboxService } from '..//services/SandboxService';
 import { App, app } from 'electron';
 import { IpcResponse } from '../../src/shared/channel-types';
+import { getDockerHubMirrorImageReference } from '../../src/shared/types';
 import { existsSync, readFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
+import { AppInstallControl } from './app-install-control';
 import { AppService } from '../services/AppService';
 import { getDataPath } from './app-paths';
 
@@ -53,7 +55,7 @@ export abstract class Runtime {
   }
 
   /** Performs application-specific installation logic within the runtime */
-  abstract install(app: Application, event?: any): Promise<IpcResponse<any>>;
+  abstract install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>>;
 
   /** Starts the application */
   abstract run(task: Task): Promise<Task>;
@@ -547,7 +549,8 @@ export class RuntimePodman extends Runtime {
  */
 export class RuntimeDocker extends Runtime {
   private getRuntimeBinPath() {
-    return this.getRuntimeClass();
+    const runtimeService = ServiceContainer.getInstance().get<{ getRuntimeBin(type: string): string }>(ServiceName.RuntimeService);
+    return runtimeService.getRuntimeBin('docker');
   }
 
   private getAppService() {
@@ -572,7 +575,91 @@ export class RuntimeDocker extends Runtime {
     }
   }
 
-  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+  private async pullImage(image: string, cwd?: string, onLog?: (message: string) => void, control?: AppInstallControl): Promise<void> {
+    const runtimeService = ServiceContainer.getInstance().get<{ getDockerRegistryMirror(): Promise<string | undefined> }>(ServiceName.RuntimeService);
+    const mirror = await runtimeService.getDockerRegistryMirror();
+    const mirrorImage = mirror ? getDockerHubMirrorImageReference(image, mirror) : undefined;
+
+    if (mirrorImage) {
+      try {
+        onLog?.(`Pulling Docker Hub image through ${new URL(mirror!).host}...\r\n`);
+        await this.pullImageReference(mirrorImage, cwd, onLog, control);
+        await control?.waitUntilResumed();
+        await this.getSanboxService().runCommand(
+          this.getRuntimeBinPath(),
+          ['image', 'tag', mirrorImage, image],
+          { cwd, signal: control?.signal, shell: false },
+        );
+        return;
+      } catch (error) {
+        control?.throwIfAborted();
+        const mirrorError = error instanceof Error ? error.message : String(error);
+        onLog?.(`The selected mirror could not provide this image; retrying directly from Docker Hub.\r\n`);
+        try {
+          await this.pullImageReference(image, cwd, onLog, control);
+          return;
+        } catch (directError) {
+          control?.throwIfAborted();
+          const directMessage = directError instanceof Error ? directError.message : String(directError);
+          throw new Error(
+            `Docker image pull failed through the selected mirror (${mirrorError}) and directly from Docker Hub (${directMessage}).`,
+          );
+        }
+      }
+    }
+
+    await this.pullImageReference(image, cwd, onLog, control);
+  }
+
+  private async pullImageReference(image: string, cwd?: string, onLog?: (message: string) => void, control?: AppInstallControl): Promise<void> {
+    const transientRegistryFailure = /unexpected EOF|\bEOF\b|connection reset|TLS handshake timeout|i\/o timeout|temporary failure|timed out/i;
+    const maxAttempts = 5;
+    let attempt = 1;
+    while (attempt <= maxAttempts) {
+      await control?.waitUntilResumed();
+      const commandController = new AbortController();
+      const removePauseListener = control?.onPauseChange((paused) => {
+        if (paused) commandController.abort();
+      });
+      try {
+        await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['pull', image], {
+          cwd,
+          onLog,
+          includeErrorOutput: true,
+          signal: commandController.signal,
+          shell: false,
+        });
+        return;
+      } catch (error) {
+        if (control?.status === 'paused') {
+          await control.waitUntilResumed();
+          continue;
+        }
+        control?.throwIfAborted();
+        const message = error instanceof Error ? error.message : String(error);
+        if (attempt === maxAttempts || !transientRegistryFailure.test(message)) throw error;
+        const delayMs = Math.min(2000 * (2 ** (attempt - 1)), 15000);
+        onLog?.(`Docker registry connection interrupted; retrying image pull in ${delayMs / 1000} seconds (attempt ${attempt + 1}/${maxAttempts}).\r\n`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        attempt += 1;
+      } finally {
+        removePauseListener?.();
+      }
+    }
+    throw new Error(`Failed to pull Docker image ${image}.`);
+  }
+
+  private async ensureImageAvailable(image: string, cwd?: string): Promise<void> {
+    try {
+      await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['image', 'inspect', image], {
+        cwd,
+      });
+    } catch {
+      await this.pullImage(image, cwd, (message) => this.getLogger().info(message, 'RuntimeDocker'));
+    }
+  }
+
+  async install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const image = app.runtime?.image;
     if (!image) {
       throw new Error(`Application ${app.name} does not define a Docker image.`);
@@ -580,18 +667,15 @@ export class RuntimeDocker extends Runtime {
 
     const emit = (data: string) => {
       this.getLogger().info(data, 'RuntimeDocker');
-      if (event) event.sender.send(`app:install:log:${app.id}`, data);
+      if (event) event.sender.send(`app:install:log:${app.catalogId || app.id}`, data);
     };
 
     await this.ensureAvailable();
+    await control?.waitUntilResumed();
     emit(`Pulling Docker image ${image}...`);
 
-    await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['pull', image], {
-      cwd: app.apphomedir,
-      onLog: (msg) => {
-        emit(msg);
-      }
-    });
+    await this.pullImage(image, app.apphomedir, emit, control);
+    await control?.waitUntilResumed();
 
     // `docker pull` prints the final digest on success. Keep the image
     // reference as the installed identifier; the model (if any) stays in
@@ -659,6 +743,7 @@ export class RuntimeDocker extends Runtime {
       if (!image) {
         throw new Error('No Docker image recorded for this application. Reinstall it from Explore.');
       }
+      await this.ensureImageAvailable(image, app.apphomedir);
 
       const { options, args } = this.buildRunArgs(task);
 
@@ -677,10 +762,16 @@ export class RuntimeDocker extends Runtime {
         ['run', '-d', '--name', task.id, ...options, image, ...args],
         {
           cwd: app.apphomedir,
-          onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
+          onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker'),
+          includeErrorOutput: true,
         }
       );
 
+      app.install = {
+        ...(app.install ?? { installed_at: new Date().toISOString(), installed_package: image }),
+        installed: true,
+        installed_image: image,
+      };
       task.status = 'running';
       await this.status(task);
       return task;
@@ -742,39 +833,52 @@ export class RuntimeDocker extends Runtime {
   getLogsConfig(task: Task): { command: string; args: string[] } {
     return {
       command: this.getRuntimeBinPath(),
-      args: ['logs', '-f', task.id]
+      args: ['logs', '--follow', '--timestamps', task.id]
     };
   }
 
   async openInteractiveShell(task: Task): Promise<void> {
     this.getLogger().info(`Opening interactive shell for Docker container ${task.id}`, 'RuntimeDocker');
-    const config = this.shellAttach(task);
-    const shellCommandString = `${config.command} ${config.args.join(' ')}`;
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(task.id)) {
+      throw new Error('The Docker container ID contains unsupported characters.');
+    }
+
+    const dockerBin = this.getRuntimeBinPath();
+    const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+    const shellCommandString = `${shellQuote(dockerBin)} exec -it ${shellQuote(task.id)} bash`;
 
     let shellCommand: string;
     let shellArgs: string[] = [];
+    let windowsVerbatimArguments = false;
 
     if (process.platform === 'win32') {
       shellCommand = 'cmd.exe';
-      shellArgs = ['/c', `start cmd.exe /k "${shellCommandString}"`];
+      shellArgs = ['/c', `start "" cmd.exe /k ""${dockerBin}" exec -it ${task.id} bash"`];
+      windowsVerbatimArguments = true;
     } else if (process.platform === 'darwin') {
       shellCommand = 'open';
-      shellArgs = ['-a', 'Terminal.app', '--args', 'bash', '-c', `${shellCommandString}; exec bash`];
+      shellArgs = ['-a', 'Terminal.app', '--args', 'bash', '-lc', `${shellCommandString}; exec bash`];
     } else {
       shellCommand = 'x-terminal-emulator';
-      shellArgs = ['-e', shellCommandString];
+      shellArgs = ['-e', 'bash', '-lc', `${shellCommandString}; exec bash`];
     }
 
-    try {
-      spawn(shellCommand, shellArgs, {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(shellCommand, shellArgs, {
         detached: true,
         stdio: 'ignore',
         env: process.env,
-      }).unref();
-    } catch (error: any) {
-      this.getLogger().error(`Failed to open interactive shell for ${task.id}: ${error.message}`, 'RuntimeDocker');
-      throw new Error(`Failed to open interactive shell: ${error.message}`);
-    }
+        windowsVerbatimArguments,
+      });
+      child.once('error', (error) => {
+        this.getLogger().error(`Failed to open interactive shell for ${task.id}: ${error.message}`, 'RuntimeDocker');
+        reject(new Error(`Failed to open interactive shell: ${error.message}`));
+      });
+      child.once('spawn', () => {
+        child.unref();
+        resolve();
+      });
+    });
   }
 
   async status(task: Task): Promise<'running' | 'stopped' | 'paused' | 'unknown'> {

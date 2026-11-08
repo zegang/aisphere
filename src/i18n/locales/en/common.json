@@ -39,6 +39,7 @@
   },
   "explore": {
     "title": "Explore Applications",
+    "count": "{{visible}} of {{total}} apps",
     "status": {
       "loading": "Loading catalog...",
       "installed": "Installed"
@@ -80,6 +81,16 @@
     },
     "action": {
       "install": "Install"
+    },
+    "batch": {
+      "select_mode": "Select apps",
+      "done_selecting": "Done",
+      "select_visible": "Select all installable apps on this page",
+      "select_app": "Select {{name}}",
+      "selected": "{{count}} selected",
+      "install_selected": "Install selected ({{count}})",
+      "installing": "Installing…",
+      "clear_selection": "Clear selection"
     },
     "message": {
       "no_apps": "No applications found matching your criteria."
@@ -208,6 +219,13 @@
       "path_entries": "PATH entries",
       "engine_info": "Engine information"
     },
+    "docker_config": {
+      "title": "Docker Hub registry mirror",
+      "hint": "AiSphere uses this mirror for public Docker Hub image pulls. If a mirror cannot provide an image, it retries directly from Docker Hub. This does not change Docker Desktop's global settings.",
+      "direct": "Use Docker Hub directly",
+      "saving": "Saving…",
+      "failed": "Could not load or save the Docker registry mirror setting."
+    },
     "engine_info": {
       "server_version": "Server version",
       "storage_driver": "Storage driver",
@@ -264,9 +282,52 @@
   },
   "apps": {
     "title": "My Apps",
+    "count": "{{count}} apps",
     "loading": "Loading installed apps...",
     "empty": "No applications installed yet.",
     "no_description": "No description provided.",
+    "install": {
+      "pause": "Pause",
+      "pause_help": "If an install script is running, it will finish its current step before pausing.",
+      "resume": "Resume",
+      "abort": "Cancel install",
+      "aborting": "Cancelling installation…",
+      "abort_confirm": "Cancel this installation? You can start it again later.",
+      "control_failed": "Could not update the installation."
+    },
+    "shutdown": {
+      "title": "Preparing to quit AiSphere",
+      "preparing": "Preparing to close running apps and managed runtimes…",
+      "cancelling_install": "Cancelling active installations…",
+      "stopping_app": "Stopping application…",
+      "stopping_runtime": "Stopping managed runtime…",
+      "completed": "Everything is stopped. AiSphere is closing…",
+      "keep_open": "Please keep AiSphere open until this finishes."
+    },
+    "nas": {
+      "title": "AiSphere LAN NAS",
+      "manage": "Manage share",
+      "close": "Close",
+      "folder": "Folder to share",
+      "no_folder": "Choose a folder on this computer",
+      "choose_folder": "Choose folder",
+      "authentication": "Require a password",
+      "authentication_help": "A new password is generated whenever the share starts.",
+      "secure_note": "Only devices on your private network can connect. HTTP is not encrypted; use this only on a trusted network.",
+      "open_note": "Anyone on your local network can browse and upload to this folder. HTTP is not encrypted; use only on a trusted network.",
+      "running": "The file share is running.",
+      "stopped": "The file share is stopped.",
+      "running_folder": "Shared folder: {{folder}}",
+      "username": "Browser username",
+      "password": "Password",
+      "copy_password": "Copy password",
+      "start": "Start sharing",
+      "stop": "Stop sharing",
+      "working": "Working...",
+      "status_failed": "Could not read the file share status.",
+      "start_failed": "Could not start the file share.",
+      "stop_failed": "Could not stop the file share."
+    },
     "workspace": {
       "back": "Back to Apps",
       "not_found": "Application not found.",
@@ -317,6 +378,18 @@
       "web_interface": "Application Web Interface",
       "interactive_shell": "Interactive Shell",
       "app_logs": "Application Logs",
+      "lifecycle_actions": "Setup and cleanup actions",
+      "lifecycle_history": "Lifecycle action history",
+      "lifecycle_hooks": {
+        "postInstallActions": "After install",
+        "postStopActions": "After stop",
+        "postUnInstallActions": "After uninstall"
+      },
+      "lifecycle_status": {
+        "completed": "Completed",
+        "skipped": "Skipped",
+        "failed": "Failed"
+      },
       "maximize": "Maximize",
       "minimize": "Minimize to Default",
       "close": "Close"
@@ -327,7 +400,25 @@
       "open_url": "Open {{url}}",
       "in_workspace": "In workspace"
     },
+    "batch": {
+      "select_mode": "Select apps",
+      "done_selecting": "Done",
+      "select_all": "Select all batch-manageable apps",
+      "nas_note": "LAN NAS has dedicated controls and is excluded from batch actions.",
+      "select_app": "Select {{name}}",
+      "selected": "{{count}} selected",
+      "start": "Start selected",
+      "stop": "Stop selected",
+      "uninstall": "Uninstall selected",
+      "uninstall_confirm": "Uninstall {{count}} selected app(s)? Their app data will be removed.",
+      "start_skipped": "Could not start these apps because their runtimes are unavailable or the apps failed: {{names}}",
+      "operation_failed": "These apps could not be processed: {{names}}"
+    },
     "status": {
+      "installing": "installing",
+      "paused": "paused",
+      "aborting": "cancelling install",
+      "aborted": "install cancelled",
       "stopped": "stopped",
       "running": "running",
       "starting": "starting",
@@ -359,7 +450,18 @@
     "runtime_autostart_hint": "Choose what happens when an installed app needs a runtime whose engine is not running.",
     "runtime_ask": "Ask every time",
     "runtime_always": "Start automatically",
-    "runtime_never": "Never start automatically"
+    "runtime_never": "Never start automatically",
+    "runtime_autoinstall": "Runtime auto-install",
+    "runtime_autoinstall_hint": "Choose what happens when an app needs a runtime that is not installed.",
+    "runtime_install_always": "Install automatically",
+    "runtime_install_never": "Never install automatically",
+    "runtime_autoinstall_failed": "Could not load or save the runtime auto-install setting.",
+    "stop_runtimes_on_exit": "When quitting AiSphere",
+    "stop_runtimes_on_exit_hint": "Choose whether to ask before stopping active apps and AiSphere-managed Docker/Podman engines. System-installed engines are never stopped.",
+    "shutdown_ask": "Ask every time",
+    "shutdown_always": "Stop automatically",
+    "shutdown_never": "Leave running",
+    "shutdown_setting_failed": "Could not load or save the shutdown setting."
   },
   "home": {
     "welcome": "Welcome to AiSphere",
@@ -451,6 +553,17 @@
     "cancel": "Cancel",
     "start_launch": "Start & Launch"
   },
+  "runtimeAutoInstall": {
+    "title": "Install {{runtime}}?",
+    "error_title": "Could not install {{runtime}}",
+    "message": "{{app}} requires {{runtime}}, which is not installed. AiSphere will install it, start its engine if needed, then resume the app installation.",
+    "install": "Install & Continue",
+    "cancel": "Not now",
+    "close": "Close",
+    "retry": "Retry",
+    "failed": "{{runtime}} could not be installed.",
+    "engine_failed": "The {{runtime}} engine could not be started."
+  },
   "workspace": {
     "sources": "Sources",
     "search_sources": "Search sources...",
@@ -472,6 +585,13 @@
     "skills_via": "Skills: {{skills}}",
     "tools_via": "Tools ({{count}}): {{tools}}",
     "read_aloud": "Read aloud",
+    "stop_reading": "Stop reading",
+    "thinking_process": "Thinking process",
+    "copy": "Copy",
+    "copy_message": "Copy message",
+    "copied": "Copied",
+    "copy_failed": "Could not copy message",
+    "read_failed": "Could not read message aloud",
     "agent_picker": "Choose the agent running this chat",
     "agent_meta": "{{skills}} skills · {{tools}} tools",
     "no_agent": "No agent (chat directly)",
