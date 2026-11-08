@@ -19,6 +19,10 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  /** Chain-of-thought streamed by reasoning models (DeepSeek-R1 class). */
+  reasoning?: string;
+  /** True while the reply is still arriving token-by-token. */
+  streaming?: boolean;
 }
 
 export interface WorkspaceDoc {
@@ -29,6 +33,14 @@ export interface WorkspaceDoc {
   messages: ChatMessage[];
   /** Agent bound to this workspace (`agent.id`, or null for direct chat). */
   agentId: string | null;
+  /**
+   * Skills attached to this workspace. Workspaces start empty and the user
+   * opts in from the Browse dialog, so the right panel reflects only what the
+   * workspace actually uses.
+   */
+  skillIds?: string[];
+  /** MCP servers attached to this workspace (empty by default). */
+  serverIds?: string[];
 }
 
 interface PersistedWorkspace {
@@ -56,6 +68,8 @@ interface WorkspaceState {
   deleteWorkspace: (id: string) => void;
   selectWorkspace: (id: string) => void;
   appendMessage: (workspaceId: string, message: Omit<ChatMessage, 'timestamp'> & { timestamp?: number }) => void;
+  /** Patches one message in place (used for token-by-token streaming). */
+  updateMessage: (workspaceId: string, messageId: string, patch: Partial<ChatMessage>) => void;
   clearMessages: (workspaceId: string) => void;
 
   /** Registers the components carried by an Explore catalog app (idempotent). */
@@ -63,20 +77,24 @@ interface WorkspaceState {
 
   // Agents bound to the active workspace
   bindWorkspaceAgent: (workspaceId: string, agentId: string | null) => void;
+  /** Attaches/detaches a skill without deleting it from the registry. */
+  setWorkspaceSkill: (workspaceId: string, skillId: string, attached: boolean) => void;
+  /** Attaches/detaches an MCP server without deleting it from the registry. */
+  setWorkspaceServer: (workspaceId: string, serverId: string, attached: boolean) => void;
 
   // Hooks / instruction packs
   setHookEnabled: (id: string, enabled: boolean) => void;
   setInstructionEnabled: (id: string, enabled: boolean) => void;
 
   // MCP
-  addServer: (server: Omit<McpServer, 'id' | 'status' | 'tools'> & { tools?: string[] }) => void;
+  addServer: (server: Omit<McpServer, 'id' | 'status' | 'tools'> & { tools?: string[] }) => string;
   updateServer: (id: string, patch: Partial<McpServer>) => void;
   removeServer: (id: string) => void;
   setServerEnabled: (id: string, enabled: boolean) => void;
   setToolEnabled: (serverId: string, toolId: string, enabled: boolean) => void;
 
   // Skills
-  addSkill: (skill: Omit<Skill, 'id' | 'source' | 'enabled'>) => void;
+  addSkill: (skill: Omit<Skill, 'id' | 'source' | 'enabled'>) => string;
   updateSkill: (id: string, patch: Partial<Skill>) => void;
   removeSkill: (id: string) => void;
 
@@ -102,6 +120,8 @@ const makeWorkspace = (name = ''): WorkspaceDoc => ({
   createdAt: Date.now(),
   messages: [{ id: 'welcome', role: 'assistant', content: '', timestamp: Date.now() }],
   agentId: null,
+  skillIds: [],
+  serverIds: [],
 });
 
 const defaultServers: McpServer[] = [
@@ -319,11 +339,46 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       ),
     })),
 
+    updateMessage: (workspaceId, messageId, patch) => set((state) => ({
+      workspaces: state.workspaces.map((workspace) =>
+        workspace.id === workspaceId
+          ? {
+              ...workspace,
+              messages: workspace.messages.map((message) =>
+                message.id === messageId ? { ...message, ...patch } : message,
+              ),
+            }
+          : workspace,
+      ),
+    })),
+
     clearMessages: (workspaceId) => patchWorkspace(workspaceId, {
       messages: [{ id: 'welcome', role: 'assistant', content: '', timestamp: Date.now() }],
     }),
 
     bindWorkspaceAgent: (workspaceId, agentId) => patchWorkspace(workspaceId, { agentId }),
+
+    setWorkspaceSkill: (workspaceId, skillId, attached) => set((state) => ({
+      workspaces: state.workspaces.map((workspace) => {
+        if (workspace.id !== workspaceId) return workspace;
+        const current = workspace.skillIds ?? [];
+        const next = attached
+          ? [...current.filter((id) => id !== skillId), skillId]
+          : current.filter((id) => id !== skillId);
+        return { ...workspace, skillIds: next };
+      }),
+    })),
+
+    setWorkspaceServer: (workspaceId, serverId, attached) => set((state) => ({
+      workspaces: state.workspaces.map((workspace) => {
+        if (workspace.id !== workspaceId) return workspace;
+        const current = workspace.serverIds ?? [];
+        const next = attached
+          ? [...current.filter((id) => id !== serverId), serverId]
+          : current.filter((id) => id !== serverId);
+        return { ...workspace, serverIds: next };
+      }),
+    })),
 
     // ---- Hooks / instruction packs ----
     setHookEnabled: (id, enabled) => set((state) => ({
@@ -457,25 +512,29 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
 
     // ---- MCP ----
-    addServer: (server) => set((state) => ({
-      servers: [
-        ...state.servers,
-        {
-          ...server,
-          id: `srv-${uid()}`,
-          status: server.enabled ? 'connecting' : 'stopped',
-          tools:
-            server.tools && server.tools.length > 0
-              ? server.tools.map((name, i) => ({
-                  id: `srv-${uid()}-tool-${i + 1}`,
-                  name,
-                  description: `${name} tool`,
-                  enabled: true,
-                }))
-              : [],
-        } as McpServer,
-      ],
-    })),
+    addServer: (server) => {
+      const id = `srv-${uid()}`;
+      set((state) => ({
+        servers: [
+          ...state.servers,
+          {
+            ...server,
+            id,
+            status: server.enabled ? 'connecting' : 'stopped',
+            tools:
+              server.tools && server.tools.length > 0
+                ? server.tools.map((name, i) => ({
+                    id: `${id}-tool-${i + 1}`,
+                    name,
+                    description: `${name} tool`,
+                    enabled: true,
+                  }))
+                : [],
+          } as McpServer,
+        ],
+      }));
+      return id;
+    },
 
     updateServer: (id, patch) => set((state) => ({
       servers: state.servers.map((server) => (server.id === id ? { ...server, ...patch } : server)),
@@ -487,16 +546,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         ...agent,
         toolIds: agent.toolIds.filter((tool) => !tool.startsWith(`${id}:`)),
       })),
-      workspaces: state.workspaces.map((workspace) => ({ ...workspace })),
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        serverIds: (workspace.serverIds ?? []).filter((serverId) => serverId !== id),
+      })),
     })),
 
     setServerEnabled: (id, enabled) => {
       const { updateServer } = get();
       if (!enabled) {
-        updateServer(id, { status: 'stopped' });
+        updateServer(id, { enabled: false, status: 'stopped' });
         return;
       }
-      updateServer(id, { status: 'connecting' });
+      updateServer(id, { enabled: true, status: 'connecting' });
       setTimeout(() => {
         const server = get().servers.find((item) => item.id === id);
         if (server?.enabled) updateServer(id, { status: 'running' as McpStatus });
@@ -515,16 +577,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     })),
 
     // ---- Skills ----
-    addSkill: (skill) => set((state) => ({
-      skills: [...state.skills, { ...skill, id: `skill-${uid()}`, source: 'custom', enabled: true } as Skill],
-    })),
+    addSkill: (skill) => {
+      const id = `skill-${uid()}`;
+      set((state) => ({
+        skills: [...state.skills, { ...skill, id, source: 'custom', enabled: true } as Skill],
+      }));
+      return id;
+    },
     updateSkill: (id, patch) => set((state) => ({
       skills: state.skills.map((skill) => (skill.id === id ? { ...skill, ...patch } : skill)),
     })),
     removeSkill: (id) => set((state) => ({
       skills: state.skills.filter((skill) => skill.id !== id),
       agents: state.agents.map((agent) => ({ ...agent, skillIds: agent.skillIds.filter((s) => s !== id) })),
-      workspaces: state.workspaces.map((workspace) => ({ ...workspace })),
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        skillIds: (workspace.skillIds ?? []).filter((skillId) => skillId !== id),
+      })),
     })),
 
     // ---- Agents ----

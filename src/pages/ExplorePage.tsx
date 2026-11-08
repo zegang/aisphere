@@ -237,7 +237,7 @@ export default function ExplorePage() {
                 <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
               </div>
             )}
-            <div className="flex items-start gap-3 mb-4">
+            <div className="flex items-start gap-3 mb-2">
               <div className="shrink-0">
                 {app.icon ? (
                   <img src={app.icon} alt={app.name} className="w-12 h-12 rounded-lg object-contain bg-white dark:bg-transparent p-1 border border-light-border dark:border-dark-border" />
@@ -248,10 +248,12 @@ export default function ExplorePage() {
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <h3 className="font-semibold text-lg truncate">{app.name}</h3>
+                {/* Status/metadata badges own the first row; the name is moved
+                    to its own full-width line below, so the chips are never
+                    squeezed and the name can use the whole card width. */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   {app.install?.installed && (
-                    <div className="relative group/status">
+                    <div className="relative group/status shrink-0">
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 font-medium shrink-0 cursor-help">
                         {t('explore.status.installed')}
                       </span>
@@ -267,15 +269,16 @@ export default function ExplorePage() {
                       </div>
                     </div>
                   )}
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 max-w-full truncate">
+                    {app.category}
+                  </span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 shrink-0">
+                    {t(`explore.kinds.${kindOf(app)}`)}
+                  </span>
                 </div>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                  {app.category}
-                </span>
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
-                  {t(`explore.kinds.${kindOf(app)}`)}
-                </span>
               </div>
             </div>
+            <h3 className="font-semibold text-lg leading-snug truncate mb-3">{app.name}</h3>
             <p className="text-sm text-light-subtle dark:text-dark-subtle mb-3 line-clamp-2">
               {app.description}
             </p>

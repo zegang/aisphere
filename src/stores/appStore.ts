@@ -14,7 +14,7 @@ import {
   SETTING_GET,
   SETTING_UPDATE,
 } from '@/shared/channel-types';
-import { Application } from '@/types/api';
+import { Application, AppTask } from '@/types/api';
 
 /** Dialog shown when an app needs a runtime whose engine is not running. */
 export interface RuntimeStartPrompt {
@@ -239,7 +239,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
         applications: state.applications.map((a) => {
           if (a.id !== id) return a;
           if (status === 'unknown') return { ...a, status: 'unknown', task: undefined };
-          return { ...a, task: a.task ? { ...a.task, status: status as any } : undefined };
+          return {
+            ...a,
+            // Keep the backend's answer on the app itself as well as the
+            // cached task, so views that read `app.status` stay accurate even
+            // if the task metadata has not been (re)fetched yet.
+            status,
+            task: a.task ? { ...a.task, status: status as AppTask['status'] } : undefined,
+          };
         }),
       }));
       return status;

@@ -1,12 +1,14 @@
-// MCP servers tab: list of Model Context Protocol servers with enable
-// toggles, transport badges, status dots, per-tool availability and an
-// add-server dialog. Layout follows VS Code's MCP settings page.
+// MCP tab: only the servers attached to the current workspace are listed.
+// The Browse dialog exposes every installed/registered server and attaching
+// one enables it for the workspace (and starts its simulated connection).
 
 import { useState } from 'react';
-import { Plus, Trash2, ChevronDown, Server, Link2, Terminal, X } from 'lucide-react';
+import { Plus, ChevronDown, Server, Link2, Terminal, X, Wrench } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { McpServer, McpTransport } from '@/types/workspace';
+import ComponentPickerDialog from './ComponentPickerDialog';
+import PanelEmptyState from './PanelEmptyState';
 
 const statusTone = (status: string) => {
   switch (status) {
@@ -24,142 +26,203 @@ const statusTone = (status: string) => {
 export function McpPanel() {
   const { t } = useTranslation();
   const servers = useWorkspaceStore((s) => s.servers);
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const setWorkspaceServer = useWorkspaceStore((s) => s.setWorkspaceServer);
   const setServerEnabled = useWorkspaceStore((s) => s.setServerEnabled);
   const setToolEnabled = useWorkspaceStore((s) => s.setToolEnabled);
-  const removeServer = useWorkspaceStore((s) => s.removeServer);
+
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+  const attachedIds = activeWorkspace?.serverIds ?? [];
+  const attachedServers = servers.filter((server) => attachedIds.includes(server.id));
 
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
 
+  const attach = (id: string, next: boolean) => {
+    setWorkspaceServer(activeWorkspaceId, id, next);
+    // Attaching a server means "use it here": enable + connect it so its tools
+    // show up in the chat tools menu immediately.
+    if (next) {
+      const server = servers.find((item) => item.id === id);
+      if (server && !server.enabled) setServerEnabled(id, true);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full relative">
-      <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+    <div className="relative flex h-full flex-col">
+      <div className="flex items-center justify-between px-4 pb-2 pt-3">
         <p className="text-xs text-light-subtle dark:text-dark-subtle">
-          {t('workspace.mcp.count', { count: servers.length })}
+          {t('workspace.panels.attached_count', { count: attachedServers.length })}
         </p>
-        <button
-          type="button"
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" /> {t('workspace.mcp.new')}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowForm(true)}
+            title={t('workspace.mcp.new')}
+            aria-label={t('workspace.mcp.new')}
+            className="rounded-lg border border-light-border p-1.5 text-light-subtle transition-colors hover:bg-light-muted hover:text-light-text dark:border-dark-border dark:text-dark-subtle dark:hover:bg-dark-muted dark:hover:text-dark-text"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            className="flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-700"
+          >
+            <Wrench className="h-3.5 w-3.5" /> {t('workspace.panels.browse')}
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-2">
-        {servers.map((server) => {
-          const tone = statusTone(server.status);
-          const open = expanded === server.id;
-          const enabledTools = server.tools.filter((tool) => tool.enabled).length;
-          return (
-            <div
-              key={server.id}
-              className={`rounded-xl border bg-light-bg dark:bg-dark-bg transition-colors ${tone.tone}`}
-            >
-              <div className="p-3 flex items-start gap-2.5">
-                <span className="w-8 h-8 shrink-0 rounded-lg bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border flex items-center justify-center relative">
-                  <Server className="w-4 h-4 text-light-subtle dark:text-dark-subtle" />
+      <div className="flex-1 space-y-2 overflow-y-auto px-3 pb-4">
+        {attachedServers.length === 0 ? (
+          <PanelEmptyState
+            icon={<Server className="h-5 w-5 text-blue-600" />}
+            title={t('workspace.mcp.empty_title')}
+            hint={t('workspace.mcp.empty_hint')}
+            actionLabel={t('workspace.mcp.browse')}
+            onAction={() => setPickerOpen(true)}
+          />
+        ) : (
+          attachedServers.map((server) => {
+            const tone = statusTone(server.status);
+            const open = expanded === server.id;
+            const enabledTools = server.tools.filter((tool) => tool.enabled).length;
+            return (
+              <div
+                key={server.id}
+                className={`rounded-xl border bg-light-bg transition-colors dark:bg-dark-bg ${tone.tone}`}
+              >
+                <div className="p-3">
+                  <div className="flex items-start gap-2.5">
+                    <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-light-border bg-light-surface dark:border-dark-border dark:bg-dark-surface">
+                      <Server className="h-4 w-4 text-light-subtle dark:text-dark-subtle" />
+                      <span className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-light-surface dark:ring-dark-surface ${tone.dot}`} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <h4 className="truncate text-sm font-semibold">{server.name}</h4>
+                        <span className="shrink-0 rounded-full bg-light-muted px-1.5 py-px text-[9px] font-semibold uppercase text-light-subtle dark:bg-dark-muted dark:text-dark-subtle">
+                          {server.transport}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 line-clamp-2 text-[11px] text-light-subtle dark:text-dark-subtle">
+                        {server.description}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      title={t('workspace.panels.detach')}
+                      onClick={() => setWorkspaceServer(activeWorkspaceId, server.id, false)}
+                      className="shrink-0 rounded-md p-1.5 text-red-500 transition-colors hover:bg-red-50 dark:hover:bg-red-900/20"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(open ? null : server.id)}
+                      className="inline-flex min-w-0 items-center gap-1 text-[10px] text-light-subtle transition-colors hover:text-blue-600 dark:text-dark-subtle"
+                    >
+                      <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+                      <span className="truncate">
+                        {t('workspace.mcp.tools_count', { count: enabledTools, total: server.tools.length })}
+                      </span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold uppercase ${tone.text} ${tone.tone}`}>
+                        {t(`workspace.mcp.status.${server.status}`)}
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={server.enabled}
+                        aria-label={t('workspace.mcp.toggle', { name: server.name })}
+                        onClick={() => setServerEnabled(server.id, !server.enabled)}
+                        className={`relative h-5 w-9 rounded-full transition-colors ${server.enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-dark-muted'}`}
+                      >
+                        <span
+                          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${server.enabled ? 'left-5' : 'left-0.5'}`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {open && (
+                  <div className="space-y-1 px-3 pb-3">
+                    <div className="flex items-center gap-1.5 truncate px-1 py-1 text-[10px] text-light-subtle dark:text-dark-subtle">
+                      {server.transport === 'stdio' ? (
+                        <Terminal className="h-3 w-3 shrink-0" />
+                      ) : (
+                        <Link2 className="h-3 w-3 shrink-0" />
+                      )}
+                      <span className="truncate">
+                        {server.transport === 'stdio'
+                          ? [server.command, ...(server.args ?? [])].join(' ')
+                          : server.url}
+                      </span>
+                    </div>
+                    <div className="border-t border-light-border pt-1.5 dark:border-dark-border">
+                      {server.tools.map((tool) => (
+                        <label
+                          key={tool.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-light-muted dark:hover:bg-dark-muted"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={tool.enabled}
+                            onChange={(event) => setToolEnabled(server.id, tool.id, event.target.checked)}
+                            className="accent-blue-600"
+                          />
+                          <span className="shrink-0 font-medium">{tool.name}</span>
+                          <span className="truncate text-[10px] text-light-subtle dark:text-dark-subtle">{tool.description}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {pickerOpen && (
+        <ComponentPickerDialog
+          kind="mcp"
+          selectedIds={attachedIds}
+          onToggle={(id) => attach(id, !attachedIds.includes(id))}
+          onClose={() => setPickerOpen(false)}
+          items={servers.map((server) => {
+            const tone = statusTone(server.status);
+            return {
+              id: server.id,
+              title: server.name,
+              description: server.description,
+              leading: (
+                <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-light-border bg-light-surface dark:border-dark-border dark:bg-dark-surface">
+                  <Server className="h-4 w-4 text-light-subtle dark:text-dark-subtle" />
                   <span className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-light-surface dark:ring-dark-surface ${tone.dot}`} />
                 </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <h4 className="text-sm font-semibold truncate">{server.name}</h4>
-                    <span className="shrink-0 px-1.5 py-px text-[9px] font-semibold uppercase rounded-full bg-light-muted dark:bg-dark-muted text-light-subtle dark:text-dark-subtle">
-                      {server.transport}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-light-subtle dark:text-dark-subtle line-clamp-2 mt-0.5">
-                    {server.description}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(open ? null : server.id)}
-                    className="mt-1 inline-flex items-center gap-1 text-[10px] text-light-subtle dark:text-dark-subtle hover:text-blue-600 transition-colors"
-                  >
-                    <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} />
-                    {t('workspace.mcp.tools_count', { count: enabledTools, total: server.tools.length })}
-                  </button>
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    type="button"
-                    title={t('workspace.mcp.status.' + server.status)}
-                    className={`text-[9px] font-semibold uppercase rounded-full px-2 py-0.5 border ${tone.text} ${tone.tone}`}
-                  >
-                    {t(`workspace.mcp.status.${server.status}`)}
-                  </button>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={server.enabled}
-                    aria-label={t('workspace.mcp.toggle', { name: server.name })}
-                    onClick={() => {
-                      const next = !server.enabled;
-                      useWorkspaceStore.setState((state) => ({
-                        servers: state.servers.map((s) =>
-                          s.id === server.id ? { ...s, enabled: next } : s,
-                        ),
-                      }));
-                      setServerEnabled(server.id, next);
-                    }}
-                    className={`relative w-9 h-5 rounded-full transition-colors ${server.enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-dark-muted'}`}
-                  >
-                    <span
-                      className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${server.enabled ? 'left-5' : 'left-0.5'}`}
-                    />
-                  </button>
-                  <button
-                    type="button"
-                    title={t('workspace.mcp.delete')}
-                    onClick={() => {
-                      if (confirm(t('workspace.mcp.delete_confirm', { name: server.name }))) {
-                        removeServer(server.id);
-                      }
-                    }}
-                    className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {open && (
-                <div className="px-3 pb-3 space-y-1">
-                  <div className="flex items-center gap-1.5 text-[10px] text-light-subtle dark:text-dark-subtle px-1 py-1 truncate">
-                    {server.transport === 'stdio' ? (
-                      <Terminal className="w-3 h-3 shrink-0" />
-                    ) : (
-                      <Link2 className="w-3 h-3 shrink-0" />
-                    )}
-                    <span className="truncate">
-                      {server.transport === 'stdio'
-                        ? [server.command, ...(server.args ?? [])].join(' ')
-                        : server.url}
-                    </span>
-                  </div>
-                  <div className="border-t border-light-border dark:border-dark-border pt-1.5">
-                    {server.tools.map((tool) => (
-                      <label
-                        key={tool.id}
-                        className="flex items-center gap-2 text-xs rounded-lg px-2 py-1 cursor-pointer hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={tool.enabled}
-                          onChange={(e) => setToolEnabled(server.id, tool.id, e.target.checked)}
-                          className="accent-blue-600"
-                        />
-                        <span className="font-medium shrink-0">{tool.name}</span>
-                        <span className="text-[10px] text-light-subtle dark:text-dark-subtle truncate">{tool.description}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+              ),
+              badge: (
+                <span className="shrink-0 rounded-full bg-light-muted px-1.5 py-px text-[9px] font-semibold uppercase text-light-subtle dark:bg-dark-muted dark:text-dark-subtle">
+                  {server.transport}
+                </span>
+              ),
+              meta: `${t(`workspace.mcp.status.${server.status}`)} · ${t('workspace.mcp.tools_count', {
+                count: server.tools.length,
+                total: server.tools.length,
+              })}`,
+            };
+          })}
+        />
+      )}
 
       {showForm && <AddServerDialog onClose={() => setShowForm(false)} />}
     </div>
@@ -169,6 +232,8 @@ export function McpPanel() {
 function AddServerDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const addServer = useWorkspaceStore((s) => s.addServer);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  const setWorkspaceServer = useWorkspaceStore((s) => s.setWorkspaceServer);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -190,43 +255,44 @@ function AddServerDialog({ onClose }: { onClose: () => void }) {
         ? { command: command.trim(), args: args.split(/\s+/).filter(Boolean) }
         : { url: url.trim() }),
     };
-    addServer(payload);
+    const id = addServer(payload);
+    setWorkspaceServer(activeWorkspaceId, id, true);
     onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="w-full max-w-md rounded-2xl bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl border border-light-border bg-light-surface shadow-2xl dark:border-dark-border dark:bg-dark-surface"
+        onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-light-border dark:border-dark-border">
+        <div className="flex items-center justify-between border-b border-light-border px-5 pb-3 pt-4 dark:border-dark-border">
           <h3 className="font-bold">{t('workspace.mcp.new_title')}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-light-muted dark:hover:bg-dark-muted transition-colors">
-            <X className="w-4 h-4" />
+          <button type="button" onClick={onClose} className="rounded p-1 transition-colors hover:bg-light-muted dark:hover:bg-dark-muted">
+            <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="px-5 py-4 space-y-3">
+        <div className="space-y-3 px-5 py-4">
           <input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(event) => setName(event.target.value)}
             placeholder={t('workspace.mcp.field_name')}
-            className="w-full bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"
+            className="w-full rounded-lg border border-light-border bg-light-bg px-3 py-2 text-sm outline-none focus:border-blue-500 dark:border-dark-border dark:bg-dark-bg"
           />
           <input
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(event) => setDescription(event.target.value)}
             placeholder={t('workspace.mcp.field_description')}
-            className="w-full bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500"
+            className="w-full rounded-lg border border-light-border bg-light-bg px-3 py-2 text-xs outline-none focus:border-blue-500 dark:border-dark-border dark:bg-dark-bg"
           />
           <div>
-            <label className="block text-[10px] font-semibold uppercase tracking-wide text-light-subtle dark:text-dark-subtle mb-1">
+            <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-light-subtle dark:text-dark-subtle">
               {t('workspace.mcp.field_transport')}
             </label>
             <select
               value={transport}
-              onChange={(e) => setTransport(e.target.value as McpTransport)}
-              className="w-full bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+              onChange={(event) => setTransport(event.target.value as McpTransport)}
+              className="w-full rounded-lg border border-light-border bg-light-bg px-2 py-1.5 text-xs outline-none focus:border-blue-500 dark:border-dark-border dark:bg-dark-bg"
             >
               <option value="stdio">stdio</option>
               <option value="http">http</option>
@@ -237,38 +303,38 @@ function AddServerDialog({ onClose }: { onClose: () => void }) {
             <>
               <input
                 value={command}
-                onChange={(e) => setCommand(e.target.value)}
+                onChange={(event) => setCommand(event.target.value)}
                 placeholder={t('workspace.mcp.field_command')}
-                className="w-full bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-light-border bg-light-bg px-3 py-2 text-xs outline-none focus:border-blue-500 dark:border-dark-border dark:bg-dark-bg"
               />
               <input
                 value={args}
-                onChange={(e) => setArgs(e.target.value)}
+                onChange={(event) => setArgs(event.target.value)}
                 placeholder={t('workspace.mcp.field_args')}
-                className="w-full bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-light-border bg-light-bg px-3 py-2 text-xs outline-none focus:border-blue-500 dark:border-dark-border dark:bg-dark-bg"
               />
             </>
           ) : (
             <input
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(event) => setUrl(event.target.value)}
               placeholder="https://example.com/mcp"
-              className="w-full bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500"
+              className="w-full rounded-lg border border-light-border bg-light-bg px-3 py-2 text-xs outline-none focus:border-blue-500 dark:border-dark-border dark:bg-dark-bg"
             />
           )}
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-blue-600" />
+          <label className="flex cursor-pointer items-center gap-2 text-xs">
+            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="accent-blue-600" />
             {t('workspace.mcp.enable_now')}
           </label>
         </div>
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-light-border dark:border-dark-border">
-          <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors">
+        <div className="flex items-center justify-end gap-2 border-t border-light-border px-5 py-4 dark:border-dark-border">
+          <button type="button" onClick={onClose} className="rounded-lg border border-light-border px-4 py-2 text-sm transition-colors hover:bg-light-muted dark:border-dark-border dark:hover:bg-dark-muted">
             {t('workspace.mcp.cancel')}
           </button>
           <button
             type="button"
             onClick={submit}
-            className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700"
           >
             {t('workspace.mcp.create')}
           </button>

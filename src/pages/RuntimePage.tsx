@@ -1,9 +1,16 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   CheckCircle,
+  CheckCircle2,
+  AlertTriangle,
   XCircle,
   Download,
+  Upload,
+  FileJson,
+  FileArchive,
+  FolderOpen,
+  Loader2,
   RefreshCw,
   ChevronRight,
   Terminal as TerminalIcon,
@@ -15,7 +22,16 @@ import {
   Square,
 } from 'lucide-react';
 import type { TFunction } from 'i18next';
-import { RUNTIME_INSTALL_INPUT, RUNTIME_INSTALL_RESIZE, type RuntimeInstallStatusEvent, type RuntimeKind } from '@/shared/channel-types';
+import {
+  RUNTIME_CONFIG_EXPORT,
+  RUNTIME_CONFIG_IMPORT,
+  RUNTIME_INSTALL_INPUT,
+  RUNTIME_INSTALL_RESIZE,
+  type RuntimeConfigExportResult,
+  type RuntimeConfigImportResult,
+  type RuntimeInstallStatusEvent,
+  type RuntimeKind,
+} from '@/shared/channel-types';
 import {
   RUNTIME_KINDS,
   isRuntimeInstallActive,
@@ -489,6 +505,63 @@ export default function RuntimePage() {
     await uninstallRuntime(type);
   };
 
+  // ---- Export / import of runtime configurations (运行时配置) ----
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportMode, setExportMode] = useState<'single' | 'folder' | 'zip'>('single');
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportResult, setExportResult] = useState<RuntimeConfigExportResult | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const [importOpen, setImportOpen] = useState(false);
+  const [importBusy, setImportBusy] = useState<'file' | 'folder' | null>(null);
+  const [importResult, setImportResult] = useState<RuntimeConfigImportResult | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const openExportDialog = () => {
+    setExportMode('single');
+    setExportResult(null);
+    setExportError(null);
+    setExportOpen(true);
+  };
+
+  const doExport = async () => {
+    setExportBusy(true);
+    setExportError(null);
+    try {
+      const result = await window.electron.invoke(RUNTIME_CONFIG_EXPORT, { mode: exportMode });
+      if (result.success && result.data) setExportResult(result.data);
+      else setExportError(result.error ?? t('runtimes.export.failed'));
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const openImportDialog = () => {
+    setImportResult(null);
+    setImportError(null);
+    setImportOpen(true);
+  };
+
+  const doImport = async (source: 'file' | 'folder') => {
+    setImportBusy(source);
+    setImportError(null);
+    try {
+      const result = await window.electron.invoke(RUNTIME_CONFIG_IMPORT, { source });
+      if (result.success && result.data) {
+        setImportResult(result.data);
+        await checkRuntimes();
+      } else {
+        setImportError(result.error ?? t('runtimes.import.failed'));
+      }
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setImportBusy(null);
+    }
+  };
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-8">
@@ -501,13 +574,31 @@ export default function RuntimePage() {
             {t('runtimes.subtitle')}
           </p>
         </div>
-        <button
-          onClick={checkRuntimes}
-          title={t('runtimes.refresh')}
-          className="p-2 hover:bg-light-muted dark:hover:bg-dark-muted rounded-full transition-colors"
-        >
-          <RefreshCw className={`w-5 h-5 ${statuses.some((status) => status.loading) ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openExportDialog}
+            title={t('runtimes.export.title')}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-light-border dark:border-dark-border bg-light-surface dark:bg-dark-surface hover:border-blue-500/50 hover:text-blue-600 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> {t('runtimes.export.button')}
+          </button>
+          <button
+            type="button"
+            onClick={openImportDialog}
+            title={t('runtimes.import.title')}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-light-border dark:border-dark-border bg-light-surface dark:bg-dark-surface hover:border-blue-500/50 hover:text-blue-600 transition-colors"
+          >
+            <Upload className="w-3.5 h-3.5" /> {t('runtimes.import.button')}
+          </button>
+          <button
+            onClick={checkRuntimes}
+            title={t('runtimes.refresh')}
+            className="p-2 hover:bg-light-muted dark:hover:bg-dark-muted rounded-full transition-colors"
+          >
+            <RefreshCw className={`w-5 h-5 ${statuses.some((status) => status.loading) ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -540,6 +631,203 @@ export default function RuntimePage() {
           onAbort={() => abortInstall(logPanelType)}
           onClose={closeLogPanel}
         />
+      )}
+
+      {/* ---- Export dialog ---- */}
+      {exportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !exportBusy && setExportOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-2xl bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-light-border dark:border-dark-border">
+              <h3 className="font-bold flex items-center gap-2">
+                <Download className="w-4 h-4 text-blue-500" /> {t('runtimes.export.title')}
+              </h3>
+              {!exportBusy && (
+                <button type="button" onClick={() => setExportOpen(false)} className="p-1 rounded hover:bg-light-muted dark:hover:bg-dark-muted transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              {!exportResult && (
+                <>
+                  {/* Organization of the exported files */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-light-subtle dark:text-dark-subtle">{t('runtimes.export.layout')}</p>
+                    {([
+                      { key: 'single', icon: FileJson, label: t('runtimes.export.mode_single'), desc: t('runtimes.export.mode_single_desc') },
+                      { key: 'folder', icon: FolderOpen, label: t('runtimes.export.mode_folder'), desc: t('runtimes.export.mode_folder_desc') },
+                      { key: 'zip', icon: FileArchive, label: t('runtimes.export.mode_zip'), desc: t('runtimes.export.mode_zip_desc') },
+                    ] as const).map(({ key, icon: Icon, label, desc }) => (
+                      <label
+                        key={key}
+                        className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                          exportMode === key
+                            ? 'border-blue-500/60 bg-blue-50/60 dark:bg-blue-900/10'
+                            : 'border-light-border dark:border-dark-border hover:border-blue-500/40'
+                        }`}
+                      >
+                        <input type="radio" name="runtime-export-mode" className="mt-1 accent-blue-600" checked={exportMode === key} onChange={() => setExportMode(key)} />
+                        <Icon className="w-4 h-4 mt-0.5 text-light-subtle dark:text-dark-subtle shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{label}</span>
+                          <span className="block text-[11px] text-light-muted dark:text-dark-muted">{desc}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <p className="text-[11px] text-light-muted dark:text-dark-muted">{t('runtimes.export.timestamp_note')}</p>
+                </>
+              )}
+
+              {exportResult && (
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2.5 p-3 rounded-xl bg-green-50 dark:bg-green-900/10 border border-green-200/60 dark:border-green-500/20">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-green-700 dark:text-green-400">
+                        {t('runtimes.export.done', { count: exportResult.count })}
+                      </p>
+                      <p className="text-[11px] text-light-muted dark:text-dark-muted break-all mt-0.5">{exportResult.path}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {exportError && (
+                <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200/60 dark:border-red-500/20">
+                  <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{exportError}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-light-border dark:border-dark-border">
+              {exportResult ? (
+                <button type="button" onClick={() => setExportOpen(false)} className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+                  {t('runtimes.export.close')}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={exportBusy}
+                    onClick={() => setExportOpen(false)}
+                    className="px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors disabled:opacity-50"
+                  >
+                    {t('runtimes.export.cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={exportBusy}
+                    onClick={doExport}
+                    className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {exportBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                    {exportBusy ? t('runtimes.export.exporting') : t('runtimes.export.confirm')}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- Import dialog ---- */}
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !importBusy && setImportOpen(false)}>
+          <div
+            className="w-full max-w-md rounded-2xl bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-light-border dark:border-dark-border">
+              <h3 className="font-bold flex items-center gap-2">
+                <Upload className="w-4 h-4 text-blue-500" /> {t('runtimes.import.title')}
+              </h3>
+              {!importBusy && (
+                <button type="button" onClick={() => setImportOpen(false)} className="p-1 rounded hover:bg-light-muted dark:hover:bg-dark-muted transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="px-5 py-4 space-y-4">
+              {!importResult && (
+                <>
+                  <p className="text-xs text-light-subtle dark:text-dark-subtle">{t('runtimes.import.hint')}</p>
+                  <div className="space-y-2">
+                    {([
+                      { key: 'file' as const, icon: FileJson, label: t('runtimes.import.files'), desc: t('runtimes.import.files_desc') },
+                      { key: 'folder' as const, icon: FolderOpen, label: t('runtimes.import.folder'), desc: t('runtimes.import.folder_desc') },
+                    ]).map(({ key, icon: Icon, label, desc }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        disabled={!!importBusy}
+                        onClick={() => doImport(key)}
+                        className="w-full flex items-start gap-3 p-3 rounded-xl border border-light-border dark:border-dark-border hover:border-blue-500/50 hover:bg-blue-50/40 dark:hover:bg-blue-900/10 transition-colors text-left disabled:opacity-50"
+                      >
+                        {importBusy === key ? (
+                          <Loader2 className="w-4 h-4 mt-0.5 text-blue-500 animate-spin shrink-0" />
+                        ) : (
+                          <Icon className="w-4 h-4 mt-0.5 text-light-subtle dark:text-dark-subtle shrink-0" />
+                        )}
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{label}</span>
+                          <span className="block text-[11px] text-light-muted dark:text-dark-muted">{desc}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {importResult && (
+                <div className="space-y-3">
+                  <div className="flex items-start gap-2.5 p-3 rounded-xl bg-green-50 dark:bg-green-900/10 border border-green-200/60 dark:border-green-500/20">
+                    <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-green-700 dark:text-green-400">
+                        {t('runtimes.import.done', { imported: importResult.imported.length, skipped: importResult.skipped.length })}
+                      </p>
+                      {importResult.imported.length > 0 && (
+                        <p className="text-[11px] text-light-muted dark:text-dark-muted mt-0.5">
+                          {importResult.imported.map((item) => item.name).join('、')}
+                        </p>
+                      )}
+                      {importResult.skipped.length > 0 && (
+                        <p className="text-[11px] text-light-muted dark:text-dark-muted mt-0.5">
+                          {t('runtimes.import.skipped_list', { types: importResult.skipped.map((item) => item.type).join('、') })}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {importResult.imported.length === 0 && importResult.skipped.length > 0 && (
+                    <p className="text-[11px] text-light-muted dark:text-dark-muted">{t('runtimes.import.nothing_new')}</p>
+                  )}
+                </div>
+              )}
+
+              {importError && (
+                <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200/60 dark:border-red-500/20">
+                  <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{importError}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-light-border dark:border-dark-border">
+              <button
+                type="button"
+                disabled={!!importBusy}
+                onClick={() => setImportOpen(false)}
+                className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {t('runtimes.import.close')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

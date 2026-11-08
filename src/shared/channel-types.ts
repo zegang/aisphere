@@ -37,6 +37,15 @@ export const RUNTIME_INSTALL_STATUS = 'runtime:install:status' as const;
 export const RUNTIME_CONFIG_EXPORT = 'runtime:config:export' as const;
 export const RUNTIME_CONFIG_IMPORT = 'runtime:config:import' as const;
 
+/**
+ * Workspace chat proxied to an installed engine app. The request is sent from
+ * the main process because the renderer cannot call the local engine directly
+ * (CORS / CSP), and only the main process knows the container's host ports.
+ */
+export const ENGINE_CHAT = 'engine:chat' as const;
+/** Main → renderer stream of partial chat tokens (`engine:chat` with a requestId). */
+export const ENGINE_CHAT_STREAM = 'engine:chat:stream' as const;
+
 export type RuntimeKind = 'docker' | 'podman' | 'apptainer' | 'conda';
 export type RuntimeInstallState = 'starting' | 'downloading' | 'installing' | 'completed' | 'failed' | 'aborted';
 
@@ -171,6 +180,45 @@ export interface RuntimeConfigImportResult {
   skipped: Array<{ type: string; reason?: string }>;
 }
 
+/** One message in an engine chat request (OpenAI chat-completions shape). */
+export interface EngineChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface EngineChatRequest {
+  /** Installed engine app (`Application.id`) that serves the model. */
+  appId: string;
+  messages: EngineChatMessage[];
+  /** When set, the answer is also streamed on `ENGINE_CHAT_STREAM`. */
+  requestId?: string;
+}
+
+/** One streamed piece of an engine answer (OpenAI delta shape). */
+export interface EngineChatStreamEvent {
+  requestId: string;
+  /** Visible answer text appended since the previous event. */
+  delta?: string;
+  /** Chain-of-thought text (DeepSeek-R1 class models). */
+  reasoning?: string;
+  /** Final marker: the full answer is available in `content`. */
+  done?: boolean;
+  /** Failure message when the stream could not be completed. */
+  error?: string;
+  content?: string;
+  model?: string;
+  endpoint?: string;
+}
+
+export interface EngineChatResult {
+  /** Assistant reply returned by the engine. */
+  content: string;
+  /** Model name reported by the engine, when present. */
+  model?: string;
+  /** Base URL that answered (e.g. http://127.0.0.1:8091). */
+  endpoint: string;
+}
+
 // Generic response/error wrapper
 export interface IpcResponse<T> {
   success: boolean;
@@ -194,7 +242,8 @@ export type SystemChannel =
   | typeof RUNTIME_DETAIL | typeof RUNTIME_ENGINE_STATUS | typeof RUNTIME_ENGINE_START | typeof RUNTIME_ENGINE_STOP
   | typeof RUNTIME_INSTALL_ABORT | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE
   | typeof RUNTIME_INSTALL_STATUS
-  | typeof RUNTIME_CONFIG_EXPORT | typeof RUNTIME_CONFIG_IMPORT;
+  | typeof RUNTIME_CONFIG_EXPORT | typeof RUNTIME_CONFIG_IMPORT
+  | typeof ENGINE_CHAT;
 
 export type LogChannel = typeof LOG_SEND;
 

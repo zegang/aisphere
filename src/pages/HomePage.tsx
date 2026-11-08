@@ -3,13 +3,15 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import { useAppStore } from '@/stores/appStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { RUNTIME_CHECK } from '@/shared/channel-types';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
-import { RefreshCw, ShieldCheck } from 'lucide-react';
+import { Layers, RefreshCw, ShieldCheck } from 'lucide-react';
 
 export default function HomePage() {
   const { t } = useTranslation();
   const setView = useAiSphereStore(s => s.setView);
+  const workspaceCount = useWorkspaceStore(s => s.workspaces.length);
 
   const {applications, fetchApplications, isLoading} = useAppStore();
   const [installedRuntimesCount, setInstalledRuntimesCount] = useState(0);
@@ -39,6 +41,17 @@ export default function HomePage() {
       <h2 className="text-2xl font-bold mb-6 ">{t('home.welcome')}</h2>
   
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div
+          onClick={() => setView('workspace')}
+          className="bg-light-surface dark:bg-dark-surface rounded-lg p-6 border border-light-border dark:border-dark-border cursor-pointer hover:border-blue-500/50 transition-all group"
+        >
+          <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+            <Layers className="w-5 h-5 text-blue-600" /> {t('home.workspaces')}
+          </h3>
+          <p className="text-3xl font-bold text-blue-600">{workspaceCount}</p>
+          <p className="text-sm text-light-subtle dark:text-dark-subtle mt-1">{t('home.workspaces_hint')}</p>
+        </div>
+
         <div onClick={() => setView('apps')} className="bg-light-surface dark:bg-dark-surface rounded-lg p-6 border border-light-border dark:border-dark-border cursor-pointer hover:border-blue-500/50 transition-all group">
           <h3 className="text-lg font-semibold mb-2">{t('home.apps')}</h3>
           <p className="text-3xl font-bold text-blue-600">

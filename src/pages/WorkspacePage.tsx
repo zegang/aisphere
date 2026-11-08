@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search,
   Plus,
@@ -28,6 +28,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { splitToolKey } from '@/types/workspace';
+import { ENGINE_CHAT, ENGINE_CHAT_STREAM, type EngineChatMessage, type EngineChatStreamEvent } from '@/shared/channel-types';
 import type { Application } from '@/types/api';
 import AgentsPanel from '@/components/workspace/AgentsPanel';
 import SkillsPanel from '@/components/workspace/SkillsPanel';
@@ -50,6 +51,16 @@ interface Source {
  * while the engine's live container status comes from `task.status` — only a
  * running engine can actually serve its model.
  */
+/**
+ * Installed LLM Inference Engine apps. Newer packages carry `kind: 'engine'`;
+ * older/legacy entries (e.g. llama.cpp and the bundled GGUF engines) have no
+ * `kind` and are identified by their LLM category instead.
+ */
+function isEngineApp(app: Application): boolean {
+  return app.kind === 'engine'
+    || (!app.kind && app.type === 'llm' && app.category === 'LLMs Inference Engine');
+}
+
 interface EngineGroup {
   appId: string;
   name: string;
@@ -61,11 +72,7 @@ function detectEngines(applications: Application[]): EngineGroup[] {
   const groups: EngineGroup[] = [];
 
   for (const app of applications) {
-    // Installed LLM Inference Engine apps (kind 'engine'; legacy entries fall
-    // back to the LLM category). Web UI front-ends are not chat engines.
-    const isEngine = app.kind === 'engine'
-      || (!app.kind && app.type === 'llm' && app.category === 'LLMs Inference Engine');
-    if (!isEngine || !app.install?.installed) continue;
+    if (!isEngineApp(app) || !app.install?.installed) continue;
 
     const installedPackage = app.install.installed_package || '';
     const fileName = installedPackage.split(/[\\/]/).pop() || '';
@@ -78,10 +85,12 @@ function detectEngines(applications: Application[]): EngineGroup[] {
       path: installedPackage,
     }];
 
+    const rawStatus = app.task?.status ?? app.status ?? 'stopped';
     groups.push({
       appId: app.id,
       name: app.name,
-      status: app.task?.status ?? 'stopped',
+      // An `unknown` backend result means the container is no longer there.
+      status: rawStatus === 'unknown' ? 'stopped' : rawStatus,
       models,
     });
   }
@@ -116,7 +125,6 @@ export default function WorkspacePage() {
     servers,
     skills,
     agents,
-    hooks,
     instructions,
     workspaces,
     activeWorkspaceId,
@@ -138,7 +146,6 @@ export default function WorkspacePage() {
   const [input, setInput] = useState('');
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [attachedToolIds, setAttachedToolIds] = useState<string[]>([]);
   const [rightTab, setRightTab] = useState<RightTab>('agents');
@@ -161,9 +168,21 @@ export default function WorkspacePage() {
   // the engine-id list (not the applications object) so status updates don't
   // re-trigger the polling itself.
   const engineIdKey = useMemo(
-    () => applications.filter((app) => app.kind === 'engine' && app.install?.installed).map((app) => app.id).join(','),
+    () => applications.filter((app) => isEngineApp(app) && app.install?.installed).map((app) => app.id).join(','),
     [applications],
   );
+
+  // Ask the backend app service for the real container status. Reading the
+  // latest list from the store keeps this callback stable so it can be reused
+  // by the polling interval, window focus and the model picker.
+  const refreshEngineStatuses = useCallback(async () => {
+    const store = useAppStore.getState();
+    const engineApps = store.applications.filter((app) => isEngineApp(app) && app.install?.installed);
+    for (const app of engineApps) {
+      await store.refreshApplicationStatus(app.id);
+    }
+  }, []);
+
   useEffect(() => {
     const engineIds = engineIdKey.split(',').filter(Boolean);
     if (engineIds.length === 0) return;
@@ -174,19 +193,38 @@ export default function WorkspacePage() {
         await refreshApplicationStatus(id);
       }
     };
+    // Check immediately when the workspace opens (status comes from the
+    // backend app service, not just the cached task metadata)…
     poll();
     const timer = setInterval(poll, 5000);
+    // …and again whenever the window regains focus, since the engine may have
+    // been started/stopped outside this view in the meantime.
+    const onFocus = () => poll();
+    window.addEventListener('focus', onFocus);
     return () => {
       disposed = true;
       clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
     };
   }, [engineIdKey, refreshApplicationStatus]);
+
+  // Re-check engine health when the user opens the model picker, so the
+  // running/stopped labels are fresh at the moment of choosing.
+  useEffect(() => {
+    if (modelMenuOpen) refreshEngineStatuses();
+  }, [modelMenuOpen, refreshEngineStatuses]);
 
   const engines = useMemo(() => detectEngines(applications), [applications]);
   const models = useMemo(() => engines.flatMap((engine) => engine.models), [engines]);
   const selectedModel = models.find((model) => model.id === selectedModelId) ?? null;
   const selectedEngine = engines.find((engine) => engine.models.some((model) => model.id === selectedModelId)) ?? null;
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
+
+  // Components opted into this workspace. Both lists start empty, so the right
+  // panel only shows what the user explicitly attached.
+  const attachedSkillIds = activeWorkspace?.skillIds ?? [];
+  const attachedServerIds = activeWorkspace?.serverIds ?? [];
+  const workspaceServers = servers.filter((server) => attachedServerIds.includes(server.id));
 
   useEffect(() => {
     fetchApplications();
@@ -259,10 +297,14 @@ export default function WorkspacePage() {
   };
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Keep the newest tokens in view. Smooth scrolling is reserved for
+    // completed messages; during a stream the text grows every few frames, so
+    // an instant scroll avoids restarting the smooth animation constantly.
+    const streaming = messages.some((message) => message.streaming);
+    chatEndRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() || !activeWorkspace) return;
 
     // Engine must be running before a chat can be dispatched (the model lives
@@ -277,49 +319,145 @@ export default function WorkspacePage() {
       }
     }
 
-    useWorkspaceStore.getState().appendMessage(activeWorkspace.id, {
-      id: Date.now().toString(),
+    const text = input.trim();
+    const workspaceId = activeWorkspace.id;
+    const engineAppId = selectedEngine?.appId ?? selectedModel?.id.split(':')[0] ?? null;
+
+    useWorkspaceStore.getState().appendMessage(workspaceId, {
+      id: `user-${Date.now()}`,
       role: 'user',
-      content: input,
+      content: text,
     });
     setInput('');
     setIsThinking(true);
 
-    const activeSkills = (selectedAgent?.skillIds ?? [])
-      .map((id) => skills.find((skill) => skill.id === id)?.name)
-      .filter(Boolean) as string[];
-    const activeTools = attachedToolIds.length > 0 ? attachedToolIds : selectedAgent?.toolIds ?? [];
-    // Installed instruction packs (AGENTS.md) and hooks shape the reply.
-    const appliedInstructions = instructions.filter((pack) => pack.enabled).map((pack) => pack.name);
-    const appliedHooks = hooks.filter((hook) => hook.enabled).map((hook) => hook.name);
-
-    setTimeout(() => {
-      setIsThinking(false);
-      const base = t('workspace.mock_response', {
-        model: selectedModel?.label ?? t('workspace.models.none'),
-        agent: selectedAgent ? t('workspace.agent_via', { agent: `${selectedAgent.emoji} ${selectedAgent.name}` }) : '',
-        skills: activeSkills.length ? t('workspace.skills_via', { skills: activeSkills.join(', ') }) : '',
-        tools:
-          activeTools.length
-            ? t('workspace.tools_via', {
-                count: activeTools.length,
-                tools: activeTools.map((key) => {
-                  const { serverId, toolId } = splitToolKey(key);
-                  return servers.find((s) => s.id === serverId)?.tools.find((tool) => tool.id === toolId)?.name ?? toolId;
-                }).join(', '),
-              })
-            : '',
-      });
-      const contextLines = [
-        appliedInstructions.length ? t('workspace.instructions_applied', { names: appliedInstructions.join(', ') }) : '',
-        appliedHooks.length ? t('workspace.hooks_applied', { names: appliedHooks.join(', ') }) : '',
-      ].filter(Boolean).join('\n');
-      useWorkspaceStore.getState().appendMessage(activeWorkspace.id, {
-        id: (Date.now() + 1).toString(),
+    if (!engineAppId) {
+      useWorkspaceStore.getState().appendMessage(workspaceId, {
+        id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: contextLines ? `${base}\n${contextLines}` : base,
+        content: t('workspace.chat_no_engine'),
       });
-    }, 1000);
+      setIsThinking(false);
+      return;
+    }
+
+    // The active agent, workspace skills/instruction packs and attached tools
+    // shape the system prompt. Workspace attachments are additive: an agent can
+    // still ship its own bundled skills/tools while the user opts extra
+    // components into this workspace.
+    const agentSkillIds = selectedAgent?.skillIds ?? [];
+    const effectiveSkillIds = [...new Set([...attachedSkillIds, ...agentSkillIds])];
+    const activeSkillDefs = skills.filter((skill) => effectiveSkillIds.includes(skill.id) && skill.enabled);
+    const enabledInstructions = instructions.filter((pack) => pack.enabled);
+    const workspaceToolIds = workspaceServers.flatMap((server) =>
+      server.tools.filter((tool) => tool.enabled).map((tool) => `${server.id}:${tool.id}`),
+    );
+    const activeTools = attachedToolIds.length > 0
+      ? attachedToolIds
+      : [...new Set([...(selectedAgent?.toolIds ?? []), ...workspaceToolIds])];
+    const activeToolNames = activeTools.map((key) => {
+      const { serverId, toolId } = splitToolKey(key);
+      return servers.find((s) => s.id === serverId)?.tools.find((tool) => tool.id === toolId)?.name ?? toolId;
+    });
+
+    const systemParts = [
+      'You are AiSphere, a helpful local AI assistant. Answer clearly and concisely.',
+      selectedAgent?.instructions ?? '',
+      ...enabledInstructions.map((pack) => `# ${pack.name}\n${pack.content}`),
+      ...activeSkillDefs.map((skill) => `# Skill: ${skill.name}\n${skill.description}\n${skill.instructions}`),
+      activeToolNames.length
+        ? `Workspace tools available to the user: ${activeToolNames.join(', ')}. Mention them when relevant; do not claim to run them yourself.`
+        : '',
+    ].map((part) => part.trim()).filter(Boolean);
+
+    const history: EngineChatMessage[] = (
+      useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === workspaceId)?.messages ?? []
+    )
+      .filter((message) => message.content.trim().length > 0)
+      .slice(-24)
+      .map((message) => ({ role: message.role, content: message.content }));
+
+    const engineMessages: EngineChatMessage[] = [
+      ...(systemParts.length ? [{ role: 'system' as const, content: systemParts.join('\n\n') }] : []),
+      ...history,
+    ];
+
+    // Streaming: insert an assistant placeholder, then patch it in place as
+    // tokens arrive from the main process. Updates are batched so a fast local
+    // model does not trigger one store write (and localStorage persist) per
+    // token.
+    const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const assistantId = `assistant-${Date.now()}`;
+    useWorkspaceStore.getState().appendMessage(workspaceId, {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      streaming: true,
+    });
+
+    let streamed = '';
+    let thought = '';
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      flushTimer = null;
+      useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
+        content: streamed,
+        reasoning: thought,
+        streaming: true,
+      });
+    };
+    const schedule = () => {
+      if (flushTimer !== null) return;
+      flushTimer = setTimeout(flush, 50);
+    };
+    const onStream = (...args: unknown[]) => {
+      const event = args[0] as EngineChatStreamEvent | undefined;
+      if (!event || event.requestId !== requestId || event.done) return;
+      if (event.reasoning) {
+        thought += event.reasoning;
+        schedule();
+      }
+      if (event.delta) {
+        streamed += event.delta;
+        schedule();
+      }
+    };
+    window.electron.on(ENGINE_CHAT_STREAM, onStream);
+
+    try {
+      // Real reply from the running engine container (main-process proxy).
+      // The final invoke result is authoritative and replaces the streamed
+      // text, so trailing whitespace and reasoning fallbacks stay consistent.
+      const result = await window.electron.invoke(ENGINE_CHAT, {
+        appId: engineAppId,
+        messages: engineMessages,
+        requestId,
+      });
+      if (result.success && result.data?.content) {
+        useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
+          content: result.data.content,
+          reasoning: undefined,
+          streaming: false,
+        });
+      } else {
+        useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
+          content: t('workspace.chat_failed', { error: result.error ?? '' }),
+          reasoning: undefined,
+          streaming: false,
+        });
+      }
+    } catch (error: any) {
+      useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
+        content: t('workspace.chat_failed', { error: error?.message ?? String(error) }),
+        reasoning: undefined,
+        streaming: false,
+      });
+    } finally {
+      window.electron.removeListener(ENGINE_CHAT_STREAM, onStream);
+      if (flushTimer !== null) clearTimeout(flushTimer);
+      setIsThinking(false);
+    }
   };
 
   const toggleSpeech = () => {
@@ -329,7 +467,6 @@ export default function WorkspacePage() {
 
   const closeMenus = () => {
     setModelMenuOpen(false);
-    setAgentMenuOpen(false);
     setToolsMenuOpen(false);
   };
   const closeOverlayProps = {
@@ -533,77 +670,11 @@ export default function WorkspacePage() {
               <Sparkles className="w-4 h-4 text-blue-600" />
             </div>
 
-            {/* Agent picker (VS Code style) */}
-            <div className="relative shrink-0">
-              <button
-                type="button"
-                onClick={() => { setAgentMenuOpen(!agentMenuOpen); setModelMenuOpen(false); setToolsMenuOpen(false); }}
-                aria-expanded={agentMenuOpen}
-                title={t('workspace.agent_picker')}
-                className="flex items-center gap-1.5 rounded-full border border-light-border dark:border-dark-border px-2.5 py-1 text-xs font-semibold hover:border-blue-500/50 transition-colors"
-              >
-                {selectedAgent ? (
-                  <span className="flex items-center gap-1 max-w-[10rem]">
-                    <span>{selectedAgent.emoji}</span>
-                    <span className="truncate">{selectedAgent.name}</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5">
-                    <Bot className="w-3.5 h-3.5" />
-                    <span>{t('workspace.no_agent')}</span>
-                  </span>
-                )}
-                <ChevronDown className="w-3 h-3 shrink-0" />
-              </button>
-
-              {agentMenuOpen && (
-                <>
-                  <div {...closeOverlayProps} />
-                  <div className="absolute top-full left-0 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-lg shadow-xl z-50 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => { bindWorkspaceAgent(activeWorkspaceId, null); setAgentMenuOpen(false); }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-left text-sm transition-colors ${!selectedAgent ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'hover:bg-light-muted dark:hover:bg-dark-muted'}`}
-                    >
-                      <Bot className="w-4 h-4 shrink-0" />
-                      <span className="flex-1">{t('workspace.no_agent')}</span>
-                      {!selectedAgent && <Check className="w-4 h-4 shrink-0" />}
-                    </button>
-                    <div className="border-t border-light-border dark:border-dark-border py-1">
-                      {agents.map((agent) => {
-                        const selected = agent.id === selectedAgentId;
-                        return (
-                          <button
-                            key={agent.id}
-                            type="button"
-                            onClick={() => { bindWorkspaceAgent(activeWorkspaceId, agent.id); setAgentMenuOpen(false); }}
-                            className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors ${selected ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'hover:bg-light-muted dark:hover:bg-dark-muted'}`}
-                          >
-                            <span className="text-base shrink-0">{agent.emoji}</span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium">{agent.name}</span>
-                              <span className="block truncate text-[10px] text-light-muted dark:text-dark-muted">
-                                {t('workspace.agent_meta', {
-                                  skills: agent.skillIds.length,
-                                  tools: agent.toolIds.length,
-                                })}
-                              </span>
-                            </span>
-                            {selected && <Check className="w-4 h-4 shrink-0" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-
             {/* Model picker */}
             <div className="relative min-w-0">
               <button
                 type="button"
-                onClick={() => { setModelMenuOpen(!modelMenuOpen); setAgentMenuOpen(false); setToolsMenuOpen(false); }}
+                onClick={() => { setModelMenuOpen(!modelMenuOpen); setToolsMenuOpen(false); }}
                 aria-expanded={modelMenuOpen}
                 className="flex items-center gap-1.5 font-semibold text-sm hover:text-blue-600 transition-colors max-w-[18rem]"
               >
@@ -748,28 +819,53 @@ export default function WorkspacePage() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {messages.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-                msg.role === 'user'
-                  ? 'bg-blue-600 text-white rounded-tr-none'
-                  : 'bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-tl-none'
-              }`}>
-                <p className="text-sm leading-relaxed">
-                  {msg.id === 'welcome' ? t('workspace.initial_message') : msg.content}
-                </p>
-                <span className="text-[10px] opacity-50 mt-1 block">
-                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
+          {messages.map((msg) => {
+            const streaming = Boolean(msg.streaming);
+            const waitingFirstToken = streaming && !msg.content && !msg.reasoning;
+            return (
+              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
+                  msg.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-tr-none'
+                    : 'bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-tl-none'
+                }`}>
+                  {msg.reasoning && (
+                    <div className={`rounded-xl border border-light-border/70 bg-light-muted/50 px-3 py-2 dark:border-dark-border/70 dark:bg-dark-muted/40 ${msg.content ? 'mb-2' : ''}`}>
+                      <p className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-light-subtle dark:text-dark-subtle">
+                        <Sparkles className="h-3 w-3" /> {t('workspace.thinking')}
+                      </p>
+                      <p className="whitespace-pre-wrap break-words text-[11px] leading-relaxed text-light-subtle dark:text-dark-subtle">
+                        {msg.reasoning}
+                      </p>
+                    </div>
+                  )}
+                  {waitingFirstToken ? (
+                    <div className="flex gap-1.5 py-1">
+                      {[0, 150, 300].map((delay) => (
+                        <span key={delay} className="h-2 w-2 animate-bounce rounded-full bg-gray-400 dark:bg-gray-500" style={{ animationDelay: `${delay}ms` }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                      {msg.id === 'welcome' ? t('workspace.initial_message') : msg.content}
+                      {streaming && (msg.content || msg.reasoning) ? (
+                        <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-current align-middle" />
+                      ) : null}
+                    </p>
+                  )}
+                  <span className="text-[10px] opacity-50 mt-1 block">
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
-          {isThinking && (
+            );
+          })}
+          {isThinking && !messages.some((msg) => msg.streaming) && (
             <div className="flex justify-start">
               <div className="rounded-2xl px-4 py-3 bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border">
                 <div className="flex gap-1.5">
                   {[0, 150, 300].map((delay) => (
-                    <span key={delay} className="h-2 w-2 rounded-full bg-light-subtle dark:text-dark-subtle animate-bounce" style={{ animationDelay: `${delay}ms` }} />
+                    <span key={delay} className="h-2 w-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-bounce" style={{ animationDelay: `${delay}ms` }} />
                   ))}
                 </div>
               </div>
@@ -826,13 +922,20 @@ export default function WorkspacePage() {
                     {t('workspace.tools.clear')}
                   </button>
                 </div>
-                {servers.filter((server) => server.enabled && server.status === 'running').length === 0 ? (
-                  <div className="px-4 py-4 text-xs text-light-muted dark:text-dark-muted">
-                    {t('workspace.tools.empty')}
+                {workspaceServers.filter((server) => server.enabled && server.status === 'running').length === 0 ? (
+                  <div className="space-y-2 px-4 py-4 text-xs text-light-muted dark:text-dark-muted">
+                    <p>{t('workspace.tools.empty')}</p>
+                    <button
+                      type="button"
+                      onClick={() => { setRightTab('mcp'); setToolsMenuOpen(false); }}
+                      className="inline-flex items-center gap-1 rounded-md border border-light-border px-2 py-1 text-[11px] font-medium text-light-text transition-colors hover:bg-light-muted dark:border-dark-border dark:text-dark-text dark:hover:bg-dark-muted"
+                    >
+                      <Wrench className="h-3 w-3" /> {t('workspace.tools.browse')}
+                    </button>
                   </div>
                 ) : (
                   <div className="max-h-64 overflow-y-auto py-1">
-                    {servers.filter((server) => server.enabled && server.status === 'running').map((server) => (
+                    {workspaceServers.filter((server) => server.enabled && server.status === 'running').map((server) => (
                       <div key={server.id}>
                         <p className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-light-muted dark:text-dark-muted">
                           {server.name}
@@ -869,7 +972,7 @@ export default function WorkspacePage() {
           <div className="max-w-3xl mx-auto relative flex items-end gap-2 bg-light-surface dark:bg-dark-surface border border-light-border dark:border-dark-border rounded-2xl p-2 shadow-lg focus-within:border-blue-500/50 transition-all">
             <button
               type="button"
-              onClick={() => { setToolsMenuOpen(!toolsMenuOpen); setModelMenuOpen(false); setAgentMenuOpen(false); }}
+              onClick={() => { setToolsMenuOpen(!toolsMenuOpen); setModelMenuOpen(false); }}
               aria-expanded={toolsMenuOpen}
               title={t('workspace.tools.title')}
               className={`p-2 rounded-xl transition-colors border ${

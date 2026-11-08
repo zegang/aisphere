@@ -1,4 +1,4 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
   SETTING_LIST,
@@ -62,6 +62,8 @@ export type ElectronInvokePayloadMap = {
   [RUNTIME_CONFIG_EXPORT]: RuntimeConfigExportRequest;
   [RUNTIME_CONFIG_IMPORT]: RuntimeConfigImportRequest;
 
+  [ENGINE_CHAT]: EngineChatRequest;
+
   [UTIL_OPEN_PATH]: string;
   [UTIL_SELECT_DIRECTORY]: string | undefined;
 };
@@ -105,6 +107,8 @@ export type ElectronInvokeResponseMap = {
   [RUNTIME_INSTALL_STATUS]: IpcResponse<{ statuses: RuntimeInstallStatusEvent[] }>;
   [RUNTIME_CONFIG_EXPORT]: IpcResponse<RuntimeConfigExportResult>;
   [RUNTIME_CONFIG_IMPORT]: IpcResponse<RuntimeConfigImportResult>;
+
+  [ENGINE_CHAT]: IpcResponse<EngineChatResult>;
 
   [UTIL_OPEN_PATH]: IpcResponse<undefined>;
   [UTIL_SELECT_DIRECTORY]: IpcResponse<{ path: string }>;

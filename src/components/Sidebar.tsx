@@ -4,16 +4,19 @@ import { useState } from 'react';
 import { Layers, Box, Home, AppWindow, Search, Settings, User, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useAiSphereStore, AiSphereView } from '@/stores/aiSphereStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 export function Sidebar() {
   const { t } = useTranslation();
   const currentView = useAiSphereStore((s) => s.view);
   const setView = useAiSphereStore((s) => s.setView);
+  // Number of workspace conversations, shown next to the workspace entry.
+  const workspaceCount = useWorkspaceStore((s) => s.workspaces.length);
   const [expanded, setExpanded] = useState(true);
 
-  const navItems: Array<{ icon: any; label: string; view: AiSphereView }> = [
-    { icon: Layers, label: t('sidebar.workspace'), view: 'workspace' },
+  const navItems: Array<{ icon: any; label: string; view: AiSphereView; count?: number }> = [
     { icon: Home, label: t('sidebar.home'), view: 'home' },
+    { icon: Layers, label: t('sidebar.workspace'), view: 'workspace', count: workspaceCount },
     { icon: AppWindow, label: t('sidebar.apps'), view: 'apps' },
     { icon: Search, label: t('sidebar.explore'), view: 'explore' },
     { icon: Box, label: t('sidebar.runtimes'), view: 'runtimes' }
@@ -46,21 +49,40 @@ export function Sidebar() {
         </div>
 
         <div className="mt-2 flex flex-col gap-2">
-          {navItems.map((item) => (
-            <button
-              key={item.view}
-              onClick={() => setView(item.view)}
-              className={`w-full rounded-lg flex items-center gap-3 px-3 py-2 transition-colors ${
-                currentView === item.view
-                  ? 'bg-blue-600 text-white'
-                  : 'text-light-subtle hover:text-light-text hover:bg-light-surface-hover dark:text-dark-subtle dark:hover:text-dark-text dark:hover:bg-dark-surface-hover'
-              }`}
-              aria-current={currentView === item.view ? 'page' : undefined}
-            >
-              <item.icon className="w-5 h-5" />
-              {expanded && <span className="text-sm font-medium">{item.label}</span>}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const active = currentView === item.view;
+            return (
+              <button
+                key={item.view}
+                onClick={() => setView(item.view)}
+                className={`relative w-full rounded-lg flex items-center gap-3 px-3 py-2 transition-colors ${
+                  active
+                    ? 'bg-blue-600 text-white'
+                    : 'text-light-subtle hover:text-light-text hover:bg-light-surface-hover dark:text-dark-subtle dark:hover:text-dark-text dark:hover:bg-dark-surface-hover'
+                }`}
+                aria-current={active ? 'page' : undefined}
+                title={!expanded && item.count !== undefined ? `${item.label} (${item.count})` : undefined}
+              >
+                <item.icon className="w-5 h-5 shrink-0" />
+                {expanded && <span className="text-sm font-medium truncate">{item.label}</span>}
+                {item.count !== undefined && item.count > 0 && (
+                  expanded ? (
+                    <span className={`ml-auto min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[11px] font-semibold ${
+                      active ? 'bg-white/25 text-white' : 'bg-light-muted text-light-subtle dark:bg-dark-muted dark:text-dark-subtle'
+                    }`}>
+                      {item.count}
+                    </span>
+                  ) : (
+                    <span className={`absolute top-1 right-1 min-w-[0.875rem] h-3.5 px-0.5 inline-flex items-center justify-center rounded-full text-[9px] font-semibold ${
+                      active ? 'bg-white text-blue-600' : 'bg-blue-600 text-white'
+                    }`}>
+                      {item.count}
+                    </span>
+                  )
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 

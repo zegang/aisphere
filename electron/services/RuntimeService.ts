@@ -14,10 +14,16 @@ import { SandboxService } from './SandboxService';
 import { Downloader } from '../utils/downloader';
 import { getDataPath } from '../utils/app-paths';
 import { compressDirectory, extractArchive, fileStamp, collectSpecJsonFiles } from '../utils/spec-io';
+import { getBuiltInRuntimeConfig, getBuiltInRuntimeInstall } from '../utils/builtin-runtimes';
 import { DbStoreService } from './DbStoreService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
-import { NAMESPACE_DEFAULT, MODULE_SETTING } from '../../src/shared/modules';
+import { NAMESPACE_DEFAULT, MODULE_APP, MODULE_SETTING } from '../../src/shared/modules';
 import {
+  ENGINE_CHAT,
+  ENGINE_CHAT_STREAM,
+  EngineChatRequest,
+  EngineChatResult,
+  EngineChatStreamEvent,
   IpcResponse,
   RUNTIME_CHECK,
   RUNTIME_CONFIG_EXPORT,
@@ -305,6 +311,26 @@ export class RuntimeService implements Service {
       } catch (e: any) {
         this.getLogger().error(`Runtime config import failed: ${e?.message ?? e}`, this.name);
         return { success: false, error: e?.message ?? String(e) };
+      }
+    });
+
+    // Workspace chats are proxied here: the renderer cannot reach the local
+    // engine (CORS/CSP) and only the main process knows the container ports.
+    // With a `requestId` the answer is also streamed token-by-token.
+    ipcMain.handle(ENGINE_CHAT, async (event, req: EngineChatRequest): Promise<IpcResponse<EngineChatResult>> => {
+      const emitStream = (chunk: Omit<EngineChatStreamEvent, 'requestId'>) => {
+        if (!req?.requestId || event.sender.isDestroyed()) return;
+        event.sender.send(ENGINE_CHAT_STREAM, { requestId: req.requestId, ...chunk });
+      };
+      try {
+        const data = await this.chatWithEngine(req, emitStream);
+        emitStream({ done: true, content: data.content, model: data.model, endpoint: data.endpoint });
+        return { success: true, data };
+      } catch (e: any) {
+        const message = e?.message ?? String(e);
+        emitStream({ done: true, error: message });
+        this.getLogger().error(`Engine chat failed: ${message}`, this.name);
+        return { success: false, error: message };
       }
     });
 
@@ -792,9 +818,10 @@ export class RuntimeService implements Service {
 
     if (type === 'docker') {
       emit('Stopping Docker Desktop...\r\n');
-      const dockerBin = this.findExecutable(runtimeDir, 'docker.exe', 4) || 'docker';
+      const builtin = getBuiltInRuntimeConfig('docker');
+      const dockerBin = this.findExecutable(runtimeDir, builtin?.engine?.binary ?? 'docker.exe', 4) || 'docker';
       try {
-        await this.runCapture(dockerBin, ['desktop', 'stop']);
+        await this.runCapture(dockerBin, builtin?.engine?.stop ?? ['desktop', 'stop']);
         emit('Docker Desktop stopped.\r\n');
       } catch (error: any) {
         emit(`Docker Desktop stop returned: ${error?.message || error}\r\n`);
@@ -854,21 +881,24 @@ export class RuntimeService implements Service {
   ): Promise<void> {
     switch (type) {
       case 'docker': {
+        // Install artifact and arguments come from the built-in runtime config
+        // (resources/runtimes/docker.json) with hard-coded values as fallback.
+        const artifact = getBuiltInRuntimeInstall('docker', 'win32', arch);
         const installer = await this.downloadArtifact({
-          url: arch === 'arm64'
+          url: artifact?.url ?? (arch === 'arm64'
             ? 'https://desktop.docker.com/win/main/arm64/Docker%20Desktop%20Installer.exe'
-            : 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe',
-          fileName: 'DockerDesktopInstaller.exe',
+            : 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe'),
+          fileName: artifact?.fileName ?? 'DockerDesktopInstaller.exe',
         }, downloadsDir, emit, session);
 
-        const installerArgs = [
+        const installerArgs = (artifact?.args ?? [
           'install',
           '--user',
           '--quiet',
           '--accept-license',
           '--backend=wsl-2',
-          `--installation-dir=${runtimeDir}`,
-        ];
+          '--installation-dir={runtimeDir}',
+        ]).map((arg) => arg.replace(/\{runtimeDir\}/g, runtimeDir));
 
         emit(`\r\nRunning Docker Desktop installer (per-user mode)...\r\n`);
         emit(`Docker Desktop will be installed into ${runtimeDir}\r\n\r\n`);
@@ -1029,13 +1059,14 @@ export class RuntimeService implements Service {
   ): Promise<void> {
     switch (type) {
       case 'docker': {
+        const artifact = getBuiltInRuntimeInstall('docker', 'linux', arch);
         const script = await this.downloadArtifact({
-          url: 'https://get.docker.com',
-          fileName: 'get-docker.sh',
+          url: artifact?.url ?? 'https://get.docker.com',
+          fileName: artifact?.fileName ?? 'get-docker.sh',
         }, downloadsDir, emit, session);
 
         emit('\r\nInstalling Docker Engine...\r\n');
-        await this.runInteractive(session, 'sh', [script], { cwd: runtimeDir, emit });
+        await this.runInteractive(session, artifact?.runner ?? 'sh', [script], { cwd: runtimeDir, emit });
         return;
       }
       case 'podman':
@@ -1470,6 +1501,232 @@ export class RuntimeService implements Service {
     return this.getRuntime(rc as RuntimeClass);
   }
 
+  // ---- Workspace engine chat (工作区对话) ----
+
+  private getAppStore() {
+    const dbSvc = ServiceContainer.getInstance().get(ServiceName.DbStoreService) as DbStoreService;
+    return dbSvc.getDB(LowDbStore, NAMESPACE_DEFAULT, MODULE_APP);
+  }
+
+  /** Container port the inference server listens on (`--port`, default 8080). */
+  private containerPortOf(app: Application): string {
+    const args = app.runtime?.args ?? app.task?.args ?? [];
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] === '--port' && /^\d+$/.test(args[i + 1] ?? '')) return args[i + 1];
+      const inline = /^--port=(\d+)$/.exec(args[i]);
+      if (inline) return inline[1];
+    }
+    return '8080';
+  }
+
+  /** Host port from a `-p host:container` mapping, or null when it is not this port. */
+  private hostPortFromMapping(spec: string, containerPort: string): string | null {
+    const parts = spec.trim().split(':');
+    if (parts.length < 2) return null;
+    const container = parts[parts.length - 1].split('/')[0];
+    const host = parts[parts.length - 2];
+    return container === containerPort && /^\d+$/.test(host) ? host : null;
+  }
+
+  /**
+   * Resolves the local URL of an engine app. `task.hostPorts` (filled from the
+   * container inspect) is authoritative; when it is missing the runtime options
+   * (`-p 8091:8080`, `--publish`, …) are parsed as a fallback.
+   */
+  private resolveEngineBaseUrl(app: Application, task?: Task): string | null {
+    const hostPorts = task?.hostPorts ?? app.task?.hostPorts ?? {};
+    const containerPort = this.containerPortOf(app);
+    const known = hostPorts[containerPort] ?? Object.values(hostPorts)[0];
+    if (known && /^\d+$/.test(known)) return `http://127.0.0.1:${known}`;
+
+    const options = app.task?.options ?? app.runtime?.options ?? [];
+    for (let i = 0; i < options.length; i += 1) {
+      const value = options[i];
+      if (value === '-p' || value === '--publish') {
+        const host = this.hostPortFromMapping(options[i + 1] ?? '', containerPort);
+        if (host) return `http://127.0.0.1:${host}`;
+        continue;
+      }
+      const inline = /^--publish=(.+)$/.exec(value);
+      if (inline) {
+        const host = this.hostPortFromMapping(inline[1], containerPort);
+        if (host) return `http://127.0.0.1:${host}`;
+        continue;
+      }
+      const host = this.hostPortFromMapping(value, containerPort);
+      if (host) return `http://127.0.0.1:${host}`;
+    }
+    return null;
+  }
+
+  /**
+   * Sends a chat-completions request to the engine app's local server
+   * (llama.cpp / Ollama / vLLM expose the OpenAI-compatible API).
+   */
+  private async chatWithEngine(
+    req: EngineChatRequest,
+    onDelta?: (chunk: Omit<EngineChatStreamEvent, 'requestId'>) => void,
+  ): Promise<EngineChatResult> {
+    if (!req?.appId) throw new Error('No engine app was selected for this chat.');
+
+    const messages = (req.messages ?? [])
+      .filter((message) =>
+        message
+        && typeof message.content === 'string'
+        && message.content.trim().length > 0
+        && (message.role === 'system' || message.role === 'user' || message.role === 'assistant'))
+      .slice(-40)
+      .map((message) => ({ role: message.role, content: message.content.slice(0, 12_000) }));
+    if (messages.length === 0) throw new Error('The chat message is empty.');
+
+    const app = await this.getAppStore().get(req.appId) as Application | undefined;
+    if (!app) throw new Error(`Engine app ${req.appId} was not found.`);
+    if (!app.install?.installed) throw new Error(`The ${app.name} app is not installed.`);
+
+    const task = app.task;
+    if (!task) throw new Error(`The ${app.name} engine has not been started yet.`);
+
+    // Refresh the status and host ports before calling; metadata may be stale
+    // after the container stopped or restarted outside AiSphere.
+    const liveTask: Task = { ...task, app } as Task;
+    let liveStatus: string;
+    try {
+      liveStatus = await this.status(liveTask);
+    } catch (error: any) {
+      throw new Error(`The ${app.name} engine is not running. Start it from the model picker and try again. (${error?.message ?? error})`);
+    }
+    if (liveStatus !== 'running') {
+      throw new Error(`The ${app.name} engine is not running (status: ${liveStatus}). Start it from the model picker and try again.`);
+    }
+
+    const baseUrl = this.resolveEngineBaseUrl(app, liveTask);
+    if (!baseUrl) {
+      throw new Error(`Could not determine the local port of the ${app.name} engine. Check the app's runtime port mapping.`);
+    }
+
+    const streaming = Boolean(onDelta && req.requestId);
+    const modelFile = (app.install?.installed_package ?? '').split(/[\\/]/).pop()?.replace(/\.gguf$/i, '') ?? '';
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 180_000);
+
+    try {
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: modelFile || 'local-model',
+            messages,
+            // Reasoning models (DeepSeek-R1) spend most of the budget on their
+            // thinking block before emitting the final answer.
+            max_tokens: 2048,
+            temperature: 0.7,
+            stream: streaming,
+          }),
+          signal: controller.signal,
+        });
+      } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          throw new Error('The engine did not answer within 3 minutes.');
+        }
+        throw new Error(`Could not reach the ${app.name} engine at ${baseUrl}: ${error?.message ?? error}`);
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`The ${app.name} engine returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`);
+      }
+
+      const contentType = response.headers.get('content-type') ?? '';
+      if (streaming && response.body && contentType.includes('text/event-stream')) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let content = '';
+        let reasoning = '';
+        let streamModel = modelFile;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let newline = buffer.indexOf('\n');
+          while (newline >= 0) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            newline = buffer.indexOf('\n');
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (!data || data === '[DONE]') continue;
+
+            let event: any;
+            try {
+              event = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            if (typeof event?.model === 'string' && event.model) streamModel = event.model;
+
+            const delta = event?.choices?.[0]?.delta ?? {};
+            // DeepSeek-R1 streams its chain of thought in `reasoning_content`
+            // and the visible answer in `content`.
+            const think = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : '';
+            const text = typeof delta.content === 'string' ? delta.content : '';
+            if (think) {
+              reasoning += think;
+              onDelta?.({ reasoning: think });
+            }
+            if (text) {
+              content += text;
+              onDelta?.({ delta: text });
+            }
+          }
+        }
+
+        const finalContent = content.trim() || reasoning.trim();
+        if (!finalContent) {
+          throw new Error('The engine returned an empty response.');
+        }
+        this.getLogger().info(`Engine chat streamed via ${baseUrl} with model ${streamModel || 'unknown'}`, this.name);
+        return { content: finalContent, model: streamModel || undefined, endpoint: baseUrl };
+      }
+
+      const payload: any = await response.json().catch(() => null);
+      const message = payload?.choices?.[0]?.message;
+      // DeepSeek-R1 returns the visible answer in `content` and the chain of
+      // thought in `reasoning_content`. When the token budget was exhausted
+      // during thinking, `content` is empty: show the reasoning rather than
+      // pretending the engine failed.
+      const finalContent = typeof message?.content === 'string' ? message.content.trim() : '';
+      const reasoning = typeof message?.reasoning_content === 'string' ? message.reasoning_content.trim() : '';
+      const content = finalContent || reasoning || (typeof payload?.choices?.[0]?.text === 'string' ? payload.choices[0].text.trim() : '');
+      if (!content) {
+        const engineError = payload?.error?.message;
+        throw new Error(engineError ? `The engine reported an error: ${engineError}` : 'The engine returned an empty response.');
+      }
+
+      // The engine ignored `stream: true` (older servers): deliver the whole
+      // answer in one delta so the UI still follows the streaming path.
+      if (streaming) onDelta?.({ delta: content });
+
+      this.getLogger().info(`Engine chat answered via ${baseUrl} with model ${(payload?.model ?? modelFile) || 'unknown'}`, this.name);
+      return {
+        content,
+        model: typeof payload?.model === 'string' ? payload.model : modelFile || undefined,
+        endpoint: baseUrl,
+      };
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        throw new Error('The engine did not answer within 3 minutes.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ---- Runtime configuration export / import (运行时配置) ----
 
   private getSettingStore() {
@@ -1530,11 +1787,14 @@ export class RuntimeService implements Service {
     const probes = await this.probeRuntimes();
     return Promise.all(SUPPORTED_RUNTIMES.map(async (type) => {
       const probe = probes.find((p) => p.type === type);
+      // A bundled resources/runtimes/<type>.json provides the display name,
+      // engine flag and the autoStart default used when the user never chose.
+      const builtin = getBuiltInRuntimeConfig(type);
       return {
         type,
-        name: runtimeLabel(type),
-        hasEngine: type === 'docker' || type === 'podman',
-        autoStart: await this.readRuntimeAutoStart(type),
+        name: builtin?.name ?? runtimeLabel(type),
+        hasEngine: builtin?.hasEngine ?? (type === 'docker' || type === 'podman'),
+        autoStart: (await this.readRuntimeAutoStart(type)) ?? builtin?.autoStart ?? null,
         installed: !!probe?.installed,
         managed: !!probe?.managed,
         version: probe?.version,

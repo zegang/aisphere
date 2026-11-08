@@ -39,7 +39,9 @@ function AiSphere() {
   const view = useAiSphereStore((s) => s.view);
   const loadSetting = useSettingStore((s) => s.loadSetting);
   const [systemInfo, setSystemInfo] = useState<SystemInfoResponse | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  // The system info rail is secondary: keep it collapsed by default so the
+  // content area gets the full width on first launch.
+  const [panelOpen, setPanelOpen] = useState(false);
 
   useEffect(() => {
     loadSetting();
