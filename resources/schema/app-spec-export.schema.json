@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aisphere.dev/schemas/app-spec-export.schema.json",
+  "title": "AiSphere Single App Spec Export",
+  "description": "Wrapper written by Explore > Export in folder or zip mode. The $schema field points editors and validators at this schema; the app property is a single application specification.",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "app"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "Optional self-reference to this schema, written by Explore > Export."
+    },
+    "schema": {
+      "const": "aisphere.app-spec"
+    },
+    "version": {
+      "const": 1
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "app": {
+      "$ref": "application-spec.schema.json"
+    }
+  },
+  "additionalProperties": false
+}

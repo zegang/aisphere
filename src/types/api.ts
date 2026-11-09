@@ -2,9 +2,8 @@
 import type { AppInstallStatus, LanNasConfig } from '@/shared/channel-types';
 
 // --- App ---
-export interface AppListResponse { apps: Application[] }
+export interface AppListResponse { apps: InstalledApplication[] }
 export interface AppDetailResponse { app: AppListItem }
-export interface AppCreateRequest { name: string }
 export interface AppStartRequest { id: string }
 export interface AppStopRequest { id: string }
 export interface AppDeleteRequest { id: string }
@@ -89,8 +88,69 @@ export interface LifecycleActionResult {
 export type LifecycleActionHook = keyof LifecycleActionHooks;
 
 export interface LifecycleActionRun {
-  hook: LifecycleActionHook;
+  hook: LifecycleActionHook | string;
   results: LifecycleActionResult[];
+}
+
+/**
+ * Application lifecycle hooks aligned with `resources/schema/application-spec.schema.json`.
+ * Current builds execute the legacy `post*Actions` fields; the remaining phases
+ * are reserved so specs can declare them without a future type change.
+ */
+export interface LifecycleHooks {
+  preInstall?: LifecycleAction[];
+  install?: LifecycleAction[];
+  postInstall?: LifecycleAction[];
+  preStart?: LifecycleAction[];
+  starting?: LifecycleAction[];
+  postStart?: LifecycleAction[];
+  preStop?: LifecycleAction[];
+  stopping?: LifecycleAction[];
+  postStop?: LifecycleAction[];
+  preUninstall?: LifecycleAction[];
+  uninstalling?: LifecycleAction[];
+  postUninstall?: LifecycleAction[];
+  preUpdate?: LifecycleAction[];
+  update?: LifecycleAction[];
+  postUpdate?: LifecycleAction[];
+  preRestart?: LifecycleAction[];
+  restarting?: LifecycleAction[];
+  postRestart?: LifecycleAction[];
+  [phase: string]: LifecycleAction[] | undefined;
+}
+
+export interface AppAuthor {
+  name: string;
+  email?: string;
+  url?: string;
+  [key: string]: unknown;
+}
+
+export interface AppInstallScript {
+  file: string;
+  interpreter?: 'auto' | 'powershell' | 'cmd' | 'bash' | 'sh' | 'custom';
+  command?: string;
+  args?: string[];
+  workingDirectory?: string;
+  environment?: Record<string, string | number | boolean>;
+  timeoutSeconds?: number;
+  elevated?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Normalized installation plan. Current AiSphere installs from `packages` and
+ * `runtime`; this describes the same strategy for newer specs.
+ */
+export interface AppInstallation {
+  method?: 'auto' | 'packages' | 'container' | 'script' | 'native' | 'conda';
+  packages?: string[];
+  image?: string;
+  script?: AppInstallScript;
+  workingDirectory?: string;
+  environment?: Record<string, string | number | boolean>;
+  timeoutSeconds?: number;
+  [key: string]: unknown;
 }
 
 export interface AppStartResult {
@@ -164,16 +224,30 @@ export interface AppComponentManifest {
   instructions?: { content: string };
 }
 
-export interface Application extends LifecycleActionHooks {
+/**
+ * Portable application specification (catalog manifest).
+ *
+ * This is the unit written by Explore > Export and read by Explore > Import.
+ * It describes what the application is and how to install/run it, but carries
+ * no state from a particular machine. Persisted installations are modelled by
+ * {@link InstalledApplication}, which extends this spec with runtime state.
+ *
+ * Mirrors `resources/schema/application-spec.schema.json`.
+ */
+export interface ApplicationSpec extends LifecycleActionHooks {
   id: string;
-  /** Stable catalog ID for installed apps, whose `id` is a generated instance UUID. */
-  catalogId?: string;
   name: string;
   org: string;
+  /** Optional structured publisher, preferred for new specs; `org` stays for compatibility. */
+  author?: string | AppAuthor;
   version: string;
   url?: string;
+  homepage?: string;
+  license?: string;
   icon?: string;
   description: string;
+  /** Longer Markdown notes or setup hints shown to the user. */
+  notes?: string;
   category: string;
   type: 'llm' | 'tool' | 'agent' | 'dataset' | 'other';
   runtime: AppRuntime;
@@ -184,26 +258,80 @@ export interface Application extends LifecycleActionHooks {
     memory: string;
     storage: string;
     gpu: string;
+    arch?: 'x64' | 'arm64' | 'any';
   };
   packages: string[];
+  /** Normalized installation plan; current builds derive install behavior from `runtime` and `packages`. */
+  installation?: AppInstallation;
   /** Workspace capability provided by this catalog entry (default `app`). */
   kind?: AppKind;
   /** Declarative manifest consumed by the workspace after installation. */
   component?: AppComponentManifest;
-  install?: {
-    installed: boolean;
-    status?: AppInstallStatus;
-    installed_at?: string;
-    installed_by?: string;
-    installed_package?: string;
-    installed_image?: string;
-  };
-  apphomedir?: string,
+  /** Cross-platform application lifecycle hooks; legacy `post*Actions` fields are aliases. */
+  lifecycle?: LifecycleHooks;
+  /** Version of the application-specification format. */
+  specVersion?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  /** Vendor or future extensions that do not map to a first-class field. */
+  extensions?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** Installation state persisted for a single installed application instance. */
+export interface AppInstallState {
+  installed: boolean;
+  status?: AppInstallStatus;
+  installed_at?: string;
+  installed_by?: string;
+  /** Downloaded model/archive path, or the installed container image when no package was downloaded. */
+  installed_package?: string;
+  /** Container image recorded after installation. */
+  installed_image?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Installed application record (persistence and runtime unit).
+ *
+ * Extends the portable spec with machine-local state. This is what `APP_LIST`
+ * returns and what the app/runtime services act on. `id` is the instance id;
+ * `catalogId` links back to the originating {@link ApplicationSpec} when the
+ * instance id was generated. Legacy records without `catalogId` use `id` as the
+ * catalog key, which is why the field stays optional.
+ *
+ * Mirrors `resources/schema/installed-application.schema.json`.
+ */
+export interface InstalledApplication extends ApplicationSpec {
+  /** Catalog ID of the spec this instance was installed from. */
+  catalogId?: string;
+  /** Installation state. Always present on records written by current builds. */
+  install: AppInstallState;
+  /** Per-instance application home directory. */
+  apphomedir?: string;
+  /** Last recorded application status (for example `uninstalling`). */
+  status?: string;
+  /** Live or last known runtime task. */
+  task?: AppTask;
+  /** Last installation or start error. */
+  error?: string;
+  /** Configuration of the built-in LAN NAS application. */
+  lanNasConfig?: LanNasConfig;
+}
+
+/**
+ * View model for one row in the Explore catalog: a portable spec enriched with
+ * this machine's installation state. Only the Explore UI consumes this shape;
+ * install requests still send the underlying spec.
+ */
+export interface ExploreApplication extends ApplicationSpec {
+  catalogId?: string;
+  install?: AppInstallState;
+  apphomedir?: string;
   status?: string;
   task?: AppTask;
   error?: string;
   lanNasConfig?: LanNasConfig;
-  [key: string]: unknown;
 }
 
 // --- System ---

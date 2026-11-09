@@ -8,7 +8,7 @@
 
 import { create } from 'zustand';
 import type { McpServer, McpStatus, Skill, Agent, McpTool, Hook, InstructionPack } from '@/types/workspace';
-import type { Application } from '@/types/api';
+import type { InstalledApplication } from '@/types/api';
 
 const STORAGE_KEY = 'aisphere.workspace.v2';
 /** Simulated handshake latency for MCP servers when enabling them. */
@@ -73,7 +73,7 @@ interface WorkspaceState {
   clearMessages: (workspaceId: string) => void;
 
   /** Registers the components carried by an Explore catalog app (idempotent). */
-  registerAppComponents: (app: Application) => void;
+  registerAppComponents: (app: InstalledApplication) => void;
 
   // Agents bound to the active workspace
   bindWorkspaceAgent: (workspaceId: string, agentId: string | null) => void;

@@ -217,7 +217,21 @@
     },
     "docker_config": {
       "title": "Docker Hub 镜像源",
-      "hint": "AiSphere 会使用此镜像拉取公开的 Docker Hub 镜像。如果镜像源无法提供镜像，会尝试直接从 Docker Hub 拉取。此设置不会更改 Docker Desktop 的全局配置。",
+      "hint": "拉取公开的 Docker Hub 镜像时，AiSphere 会按顺序尝试已启用的镜像源；全部失败后再直接从 Docker Hub 拉取。此设置不会更改 Docker Desktop 的全局配置。",
+      "empty": "尚未配置镜像源，公开镜像将直接从 Docker Hub 拉取。",
+      "add_label": "添加镜像源",
+      "add_placeholder": "https://mirror.example.com",
+      "add": "添加",
+      "suggestions": "推荐：",
+      "enabled": "已启用",
+      "disabled": "已停用",
+      "enable": "启用镜像源",
+      "disable": "停用镜像源",
+      "move_up": "上移",
+      "move_down": "下移",
+      "remove": "移除",
+      "invalid": "请输入有效的 http(s) 镜像地址，不能包含凭据、查询参数或片段。",
+      "duplicate": "该镜像源已在列表中。",
       "direct": "直接使用 Docker Hub",
       "saving": "正在保存…",
       "failed": "无法读取或保存 Docker 镜像源设置。"
@@ -329,6 +343,7 @@
       "not_found": "未找到该应用。",
       "abort": "中止",
       "launch_failed": "启动失败",
+      "operation_error": "应用操作失败",
       "dismiss": "忽略",
       "running_tasks": "当前有正在运行的任务。",
       "about": "关于",
@@ -406,9 +421,17 @@
       "start": "启动所选",
       "stop": "停止所选",
       "uninstall": "卸载所选",
-      "uninstall_confirm": "确定卸载所选的 {{count}} 个应用吗？其应用数据也会被删除。",
       "start_skipped": "以下应用的运行环境不可用或应用启动失败，无法启动：{{names}}",
       "operation_failed": "以下应用操作失败：{{names}}"
+    },
+    "uninstall_dialog": {
+      "title": "卸载 {{name}}？",
+      "message": "AiSphere 将在需要时停止应用，并删除其安装文件和应用数据。",
+      "batch_title": "卸载 {{count}} 个应用？",
+      "batch_message": "AiSphere 将在需要时停止所选应用，并删除它们的安装文件和应用数据。",
+      "warning": "此操作无法撤销。",
+      "cancel": "保留应用",
+      "confirm": "卸载"
     },
     "status": {
       "installing": "安装中",
@@ -457,7 +480,15 @@
     "shutdown_ask": "每次询问",
     "shutdown_always": "自动停止",
     "shutdown_never": "保持运行",
-    "shutdown_setting_failed": "无法读取或保存退出时停止运行环境的设置。"
+    "shutdown_setting_failed": "无法读取或保存退出时停止运行环境的设置。",
+    "network_access": "本地网络浏览器访问",
+    "network_access_enabled": "已在端口 {{port}} 启用。请在浏览器中打开以下地址，并使用访问令牌登录。",
+    "network_access_disabled": "当前已禁用。若要启用，请在 resources/config/config.json 中将 networkAccess.enabled 设为 true，然后重启 AiSphere。配置端口：{{port}}。",
+    "network_access_warning": "持有此令牌的任何人都可以控制 AiSphere 并在此电脑上运行应用。请仅在可信网络中使用，并妥善保管令牌。",
+    "network_access_token": "局域网访问令牌",
+    "network_access_copy": "复制令牌",
+    "network_access_not_listening": "配置已启用局域网访问，但网页服务未能启动。",
+    "network_access_failed": "无法读取局域网访问状态。"
   },
   "home": {
     "welcome": "欢迎使用 AiSphere",
@@ -524,8 +555,7 @@
     "stop": "停止",
     "restart": "重启",
     "delete": "删除",
-    "uninstall": "卸载",
-    "uninstall_confirm": "您确定要卸载此应用程序吗"
+    "uninstall": "卸载"
   },
   "runtimePrompt": {
     "start_title": "启动 {{runtime}}？",
@@ -577,6 +607,7 @@
     "stop_reading": "停止朗读",
     "thinking_process": "思考过程",
     "copy": "复制",
+    "redo": "重新生成",
     "copy_message": "复制消息",
     "copied": "已复制",
     "copy_failed": "无法复制消息",

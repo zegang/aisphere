@@ -7,7 +7,7 @@ import {
   IpcResponse, ExploreExportRequest, ExploreExportResult, ExploreImportRequest, ExploreImportResult, LAN_NAS_APP_ID,
   AppInstallControlRequest, AppInstallControlResult, AppShutdownProgressEvent,
 } from '../../src/shared/channel-types';
-import { Application } from '../../src/types/api';
+import { ApplicationSpec, ExploreApplication, InstalledApplication } from '../../src/types/api';
 import { MOCK_APPLICATIONS } from '../tests/MOCKDB';
 import { DbStoreService } from './DbStoreService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
@@ -22,13 +22,18 @@ import { join } from 'path';
 import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { AppInstallControl } from '../utils/app-install-control';
 
+// Stable schema identifiers published alongside `resources/schema`. Exported
+// files point at them so editors and CI can validate without extra setup.
+const APP_EXPORT_SCHEMA_URL = 'https://aisphere.dev/schemas/app-spec-export.schema.json';
+const APP_CATALOG_SCHEMA_URL = 'https://aisphere.dev/schemas/app-catalog.schema.json';
+
 export class ExploreService implements Service {
   name = ServiceName.ExploreService;
   private installingCatalogIds = new Set<string>();
-  private installSessions = new Map<string, { control: AppInstallControl; app: Application }>();
+  private installSessions = new Map<string, { control: AppInstallControl; app: InstalledApplication }>();
   private installCompletions = new Map<string, Promise<void>>();
   private installCompletionResolvers = new Map<string, () => void>();
-  private installingApps = new Map<string, Application>();
+  private installingApps = new Map<string, ApplicationSpec>();
   private shuttingDown = false;
   private shutdownProgressHandler?: (progress: AppShutdownProgressEvent) => void;
 
@@ -114,12 +119,12 @@ export class ExploreService implements Service {
     });
 
     ipcMain.handle(EXPLORE_LIST, async () => {
-      let appsMarket = await this.getDBStore().list();
+      let appsMarket = await this.getDBStore().list() as ApplicationSpec[];
       // Merge Mock for tests
-      let apps = [ ...MOCK_APPLICATIONS, ...appsMarket ];
+      let apps: ApplicationSpec[] = [ ...MOCK_APPLICATIONS, ...appsMarket ];
       let installedApps = await this.getAppService().listApps();
 
-      const mergedApps = apps.map(app => {
+      const mergedApps: ExploreApplication[] = apps.map(app => {
         const installedInfo = installedApps.find(a => (a.catalogId || a.id) === app.id);
         return installedInfo ? { ...app, ...installedInfo, id: app.id, catalogId: app.id } : app;
       });
@@ -132,7 +137,7 @@ export class ExploreService implements Service {
       return { success: true, data: { app } };
     });
 
-    ipcMain.handle(EXPLORE_INSTALL, async (event, app: Application): Promise<IpcResponse<any>> => {
+    ipcMain.handle(EXPLORE_INSTALL, async (event, app: ApplicationSpec): Promise<IpcResponse<any>> => {
       if (this.shuttingDown) return { success: false, error: 'AiSphere is shutting down and cannot start another installation.' };
       const requestedCatalogId = app?.id;
       if (!requestedCatalogId) return { success: false, error: 'The selected application has no catalog ID.' };
@@ -140,10 +145,10 @@ export class ExploreService implements Service {
         return { success: false, error: `${app.name || requestedCatalogId} is already being installed.` };
       }
       this.installingCatalogIds.add(requestedCatalogId);
-      let catalogApp: Application | undefined;
+      let catalogApp: ApplicationSpec | undefined;
       try {
         catalogApp = MOCK_APPLICATIONS.find((item) => item.id === requestedCatalogId)
-          ?? await this.getDBStore().get(requestedCatalogId) as Application | undefined;
+          ?? await this.getDBStore().get(requestedCatalogId) as ApplicationSpec | undefined;
       } catch (error) {
         this.installingCatalogIds.delete(requestedCatalogId);
         const message = error instanceof Error ? error.message : String(error);
@@ -164,7 +169,7 @@ export class ExploreService implements Service {
       this.installingApps.set(catalogId, catalogApp);
       const completion = new Promise<void>((resolve) => this.installCompletionResolvers.set(catalogId, resolve));
       this.installCompletions.set(catalogId, completion);
-      let installingApp: Application | undefined;
+      let installingApp: InstalledApplication | undefined;
       let installControl: AppInstallControl | undefined;
       try {
         const appService = this.getAppService();
@@ -187,7 +192,7 @@ export class ExploreService implements Service {
           return { success: false, error: 'AiSphere is shutting down and cannot start another installation.' };
         }
 
-        const installedApp: Application = {
+        const installedApp: InstalledApplication = {
           ...catalogApp,
           ...existing,
           id: existing?.id ?? randomUUID(),
@@ -197,6 +202,7 @@ export class ExploreService implements Service {
           version: catalogApp.version,
           runtime: catalogApp.runtime,
           packages: catalogApp.packages,
+          install: existing?.install ?? { installed: false },
           error: undefined,
         };
 
@@ -301,10 +307,12 @@ export class ExploreService implements Service {
    * File and folder names embed a timestamp. `targetPath` (file path for
    * `single`, destination directory for `folder`/`zip`) skips the native
    * dialog — used by tests; the UI flow always goes through the dialogs.
+   * Every written file carries a `$schema` identifier and leaves out
+   * machine-local installed state.
    */
   private async exportApps(req: ExploreExportRequest): Promise<ExploreExportResult> {
     const mode = req?.mode ?? 'single';
-    const apps = (Array.isArray(req?.apps) ? req.apps : []).filter((a: any) => a && typeof a.id === 'string') as Application[];
+    const apps = (Array.isArray(req?.apps) ? req.apps : []).filter((a: any) => a && typeof a.id === 'string') as ApplicationSpec[];
     if (apps.length === 0) throw new Error('No app specs to export.');
     const ts = fileStamp();
 
@@ -321,7 +329,14 @@ export class ExploreService implements Service {
       }
       writeFileSync(
         filePath,
-        JSON.stringify({ schema: 'aisphere.app-catalog', version: 1, exportedAt: new Date().toISOString(), count: apps.length, apps }, null, 2) + '\n',
+        JSON.stringify({
+          $schema: APP_CATALOG_SCHEMA_URL,
+          schema: 'aisphere.app-catalog',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          count: apps.length,
+          apps: apps.map((app) => this.toExportSpec(app)),
+        }, null, 2) + '\n',
         'utf8',
       );
       shell.showItemInFolder(filePath);
@@ -347,7 +362,13 @@ export class ExploreService implements Service {
       const file = join(folder, `${app.id}-${slugName(String(app.name))}-${ts}.json`);
       writeFileSync(
         file,
-        JSON.stringify({ schema: 'aisphere.app-spec', version: 1, exportedAt: new Date().toISOString(), app }, null, 2) + '\n',
+        JSON.stringify({
+          $schema: APP_EXPORT_SCHEMA_URL,
+          schema: 'aisphere.app-spec',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          app: this.toExportSpec(app),
+        }, null, 2) + '\n',
         'utf8',
       );
     }
@@ -409,7 +430,7 @@ export class ExploreService implements Service {
         }
       }
 
-      const normalized = parsed.map((raw) => this.normalizeImportedApp(raw)).filter((a): a is Application => a !== null);
+      const normalized = parsed.map((raw) => this.normalizeImportedApp(raw)).filter((a): a is ApplicationSpec => a !== null);
       if (normalized.length === 0) throw new Error('No valid app specs found in the selection.');
 
       // Skip anything already known (built-ins, installed apps, prior imports).
@@ -439,8 +460,24 @@ export class ExploreService implements Service {
     }
   }
 
+  /**
+   * Removes per-machine runtime state before writing a spec to disk. `install`,
+   * `task`, `status`, `error`, and `apphomedir` describe this machine's
+   * installation, not the portable catalog definition, and the schema marks
+   * them read-only. Import already drops the same fields.
+   */
+  private toExportSpec(app: ApplicationSpec): ApplicationSpec {
+    const spec = { ...app };
+    delete spec.install;
+    delete spec.task;
+    delete spec.status;
+    delete spec.error;
+    delete spec.apphomedir;
+    return spec;
+  }
+
   /** Coerces an arbitrary parsed spec object into a clean, never-installed Application. */
-  private normalizeImportedApp(raw: unknown): Application | null {
+  private normalizeImportedApp(raw: unknown): ApplicationSpec | null {
     if (!raw || typeof raw !== 'object') return null;
     const obj = raw as Record<string, any>;
     if (obj.app && typeof obj.app === 'object') return this.normalizeImportedApp(obj.app);
@@ -471,7 +508,7 @@ export class ExploreService implements Service {
         gpu: String(obj.requirements?.gpu ?? 'Not required'),
       },
       packages: Array.isArray(obj.packages) ? obj.packages.map(String) : [],
-    } as Application;
+    } as ApplicationSpec;
 
     if (obj.component && typeof obj.component === 'object') app.component = obj.component;
     // Imported specs are catalog definitions only — never carry install state,

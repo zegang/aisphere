@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aisphere.dev/schemas/installed-application.schema.json",
+  "title": "AiSphere Installed Application",
+  "description": "Persisted installed-application record. It is a portable application specification (application-spec.schema.json) plus machine-local installation and runtime state such as install, task, apphomedir, status, error, and lanNasConfig. Records are stored flattened in the app database; the spec fields are snapshotted at install time, so a catalog update does not silently change an installed instance.",
+  "allOf": [
+    {
+      "$ref": "application-spec.schema.json"
+    },
+    {
+      "type": "object",
+      "required": [
+        "install"
+      ],
+      "properties": {
+        "catalogId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Catalog ID of the specification this instance was installed from. Optional for legacy records whose id is still the catalog id."
+        },
+        "install": {
+          "$ref": "#/$defs/InstallState"
+        },
+        "task": {
+          "$ref": "#/$defs/TaskState"
+        },
+        "apphomedir": {
+          "type": "string",
+          "description": "Per-instance application home directory."
+        },
+        "status": {
+          "type": "string",
+          "description": "Last recorded application status, for example uninstalling."
+        },
+        "error": {
+          "type": "string",
+          "description": "Last installation or start error."
+        },
+        "lanNasConfig": {
+          "$ref": "#/$defs/LanNasConfig"
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "InstallState": {
+      "type": "object",
+      "description": "Installation state recorded for one installed application instance.",
+      "required": [
+        "installed"
+      ],
+      "properties": {
+        "installed": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "installing",
+            "paused",
+            "aborting",
+            "installed",
+            "failed",
+            "aborted"
+          ]
+        },
+        "installed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "installed_by": {
+          "type": "string"
+        },
+        "installed_package": {
+          "type": "string",
+          "description": "Downloaded model/archive path or the Docker image when no package was downloaded."
+        },
+        "installed_image": {
+          "type": "string",
+          "description": "Container image recorded after installation."
+        }
+      },
+      "additionalProperties": true
+    },
+    "TaskState": {
+      "type": "object",
+      "description": "Runtime task metadata persisted on an installed application.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "rc": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "startscript": {
+          "type": "string"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "running",
+            "pausing",
+            "paused",
+            "stopping",
+            "stopped",
+            "failed",
+            "uninstalling",
+            "installing",
+            "unknown"
+          ]
+        },
+        "hostPorts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Mapping of container ports to host ports."
+        }
+      },
+      "additionalProperties": true
+    },
+    "LanNasConfig": {
+      "type": "object",
+      "description": "Configuration for the built-in LAN NAS application.",
+      "required": [
+        "directory",
+        "authenticationEnabled"
+      ],
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "authenticationEnabled": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

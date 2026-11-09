@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { SettingKey, useSettingStore } from '@/stores/settingStore';
 import { useTranslation } from '@/i18n';
 import { Themes } from '@/shared/types';
-import { SETTING_GET, SETTING_UPDATE, UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY } from '@/shared/channel-types';
-import { Folder, FolderOpen } from 'lucide-react';
+import { REMOTE_ACCESS_STATUS, SETTING_GET, SETTING_UPDATE, UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY, type RemoteAccessStatus } from '@/shared/channel-types';
+import { Copy, Folder, FolderOpen, Globe } from 'lucide-react';
 
 const RUNTIME_OPTIONS = ['docker', 'podman', 'conda', 'apptainer'] as const;
 const runtimeAutoStartKey = (runtime: string) => `runtime.autoStart.${runtime}`;
@@ -24,6 +24,8 @@ export default function SettingsPage() {
   const [runtimeAutoInstallError, setRuntimeAutoInstallError] = useState<string | null>(null);
   const [shutdownBehavior, setShutdownBehavior] = useState<'ask' | 'always' | 'never'>('always');
   const [shutdownSettingError, setShutdownSettingError] = useState<string | null>(null);
+  const [remoteAccess, setRemoteAccess] = useState<RemoteAccessStatus | null>(null);
+  const [remoteAccessError, setRemoteAccessError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -46,6 +48,23 @@ export default function SettingsPage() {
       disposed = true;
     };
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    const load = async () => {
+      try {
+        const result = await window.electron.invoke(REMOTE_ACCESS_STATUS);
+        if (!result.success) throw new Error(result.error ?? t('settings.network_access_failed'));
+        if (!disposed) setRemoteAccess(result.data ?? null);
+      } catch (error) {
+        if (!disposed) setRemoteAccessError(error instanceof Error ? error.message : String(error));
+      }
+    };
+    load();
+    return () => {
+      disposed = true;
+    };
+  }, [t]);
 
   useEffect(() => {
     let disposed = false;
@@ -151,10 +170,76 @@ export default function SettingsPage() {
     }
   };
 
+  const copyRemoteToken = async () => {
+    if (!remoteAccess?.token) return;
+    try {
+      await navigator.clipboard.writeText(remoteAccess.token);
+    } catch (error) {
+      const input = document.createElement('textarea');
+      input.value = remoteAccess.token;
+      input.style.position = 'fixed';
+      input.style.opacity = '0';
+      document.body.appendChild(input);
+      input.select();
+      const copied = document.execCommand('copy');
+      input.remove();
+      if (!copied) setRemoteAccessError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   return (
     <div className="p-6">
       <h2 className="text-2xl font-bold mb-6">{t('settings.title')}</h2>
       <div className="space-y-4">
+        <section className="rounded-xl border border-light-border bg-light-surface p-4 dark:border-dark-border dark:bg-dark-surface">
+          <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+            <Globe className="h-4 w-4 text-blue-500" />
+            {t('settings.network_access')}
+          </h3>
+          <p className="mb-3 text-xs text-light-subtle dark:text-dark-subtle">
+            {t(remoteAccess?.enabled ? 'settings.network_access_enabled' : 'settings.network_access_disabled', {
+              port: remoteAccess?.port ?? 3210,
+            })}
+          </p>
+          <p className="mb-3 text-xs font-medium text-amber-700 dark:text-amber-400">
+            {t('settings.network_access_warning')}
+          </p>
+          {remoteAccess?.listening && remoteAccess.urls.length > 0 && (
+            <div className="space-y-2">
+              <div className="space-y-1">
+                {remoteAccess.urls.map((url) => (
+                  <a key={url} href={url} target="_blank" rel="noreferrer" className="block break-all text-xs text-blue-600 hover:underline dark:text-blue-400">
+                    {url}
+                  </a>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="password"
+                  readOnly
+                  value={remoteAccess.token ?? ''}
+                  aria-label={t('settings.network_access_token')}
+                  className="min-w-0 flex-1 rounded border border-light-border bg-light-bg px-3 py-1.5 font-mono text-xs dark:border-dark-border dark:bg-dark-bg"
+                />
+                <button
+                  type="button"
+                  onClick={copyRemoteToken}
+                  className="inline-flex items-center gap-1.5 rounded border border-light-border px-3 py-1.5 text-xs hover:bg-light-muted dark:border-dark-border dark:hover:bg-dark-muted"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {t('settings.network_access_copy')}
+                </button>
+              </div>
+            </div>
+          )}
+          {remoteAccess && !remoteAccess.listening && (remoteAccess.enabled || remoteAccess.error) && (
+            <p role="alert" className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+              {remoteAccess.error || t('settings.network_access_not_listening')}
+            </p>
+          )}
+          {remoteAccessError && <p role="alert" className="mt-2 text-xs text-red-500">{remoteAccessError}</p>}
+        </section>
+
         <div>
           <label className="block text-sm font-medium mb-1">{t('settings.language')}</label>
           <select

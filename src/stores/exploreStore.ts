@@ -6,13 +6,13 @@ import {
   SETTING_GET,
   type RuntimeKind,
 } from '@/shared/channel-types';
-import { Application } from '@/types/api';
+import { ExploreApplication } from '@/types/api';
 import { useWorkspaceStore } from './workspaceStore';
 import { useAiSphereStore, type AiSphereView } from './aiSphereStore';
 import { SettingKey } from '@/shared/types';
 
 export interface RuntimeInstallPrompt {
-  app: Application;
+  app: ExploreApplication;
   runtime: RuntimeKind;
   returnView: AiSphereView;
   stage: 'ask' | 'installing' | 'error';
@@ -20,7 +20,7 @@ export interface RuntimeInstallPrompt {
 }
 
 interface ExploreState {
-  applications: Application[];
+  applications: ExploreApplication[];
   loading: boolean;
   installingId: string | null;
   installProgress: Record<string, number | null>;
@@ -44,7 +44,7 @@ interface ExploreState {
   setPlatform: (platform: string) => void;
   setRuntime: (runtime: string) => void;
   clearFilters: () => void;
-  installApplication: (app: Application, runtimeReady?: boolean) => Promise<boolean>;
+  installApplication: (app: ExploreApplication, runtimeReady?: boolean) => Promise<boolean>;
   setRuntimeInstallPrompt: (prompt: RuntimeInstallPrompt | null) => void;
   setSelectedAppId: (id: string | null) => void;
 }
@@ -177,7 +177,7 @@ export const useExploreStore = create<ExploreState>((set, get) => ({
         // Ingest the installed components (MCP servers, skills, agents,
         // hooks, instructions…) into the workspace registry so every
         // workspace can immediately use what the new app provides.
-        useWorkspaceStore.getState().registerAppComponents(result.data as Application);
+        useWorkspaceStore.getState().registerAppComponents(result.data);
         return true;
       } else {
         const missingRuntime = result.data?.runtimeMissing as RuntimeKind | undefined;

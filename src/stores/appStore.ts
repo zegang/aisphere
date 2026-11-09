@@ -14,7 +14,7 @@ import {
   SETTING_GET,
   SETTING_UPDATE,
 } from '@/shared/channel-types';
-import { Application, LifecycleActionResult, AppTask } from '@/types/api';
+import { InstalledApplication, LifecycleActionResult, AppTask } from '@/types/api';
 import { useLifecycleHistoryStore } from '@/stores/lifecycleHistoryStore';
 
 /** Dialog shown when an app needs a runtime whose engine is not running. */
@@ -32,6 +32,7 @@ const runtimeLabel = (runtime: string) => {
 };
 
 const runtimeAutoStartKey = (runtime: string) => `runtime.autoStart.${runtime}`;
+let applicationFetchSequence = 0;
 
 async function readRuntimeAutoStart(runtime: string): Promise<'always' | 'never' | undefined> {
   try {
@@ -58,7 +59,7 @@ interface AppStore {
   setActiveTerminalId: (id: string | null) => void;
 
   // Application Data & Lifecycle
-  applications: Application[];
+  applications: InstalledApplication[];
   lifecycleResultsByAppId: Record<string, LifecycleActionResult[]>;
   dismissLifecycleResults: (id: string) => void;
   isLoading: boolean;
@@ -71,7 +72,7 @@ interface AppStore {
   cancelRuntimeStart: (remember: boolean) => Promise<void>;
   dismissRuntimePrompt: () => void;
   stopApplication: (id: string) => Promise<boolean>;
-  uninstallApplication: (id: string, confirmUser?: boolean) => Promise<boolean>;
+  uninstallApplication: (id: string) => Promise<boolean>;
   openApplicationShell: (id: string) => Promise<void>;
   refreshApplicationStatus: (id: string) => Promise<string>;
   inspectApplication: (id: string) => Promise<any>;
@@ -92,15 +93,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   isLoading: false,
   runtimePrompt: null,
   fetchApplications: async () => {
+    const requestId = ++applicationFetchSequence;
     set({ isLoading: true });
     try {
       const result = await window.electron.invoke(APP_LIST);
+      if (requestId !== applicationFetchSequence) return;
       if (result.success) {
-        const apps = (result.data?.apps as Application[]) || [];
-        set({ applications: apps });
+        const apps = (result.data?.apps as InstalledApplication[]) || [];
+        const uninstallingIds = new Set(
+          get().applications.filter((app) => app.status === 'uninstalling').map((app) => app.id)
+        );
+        set({
+          applications: apps.map((app) =>
+            uninstallingIds.has(app.id) ? { ...app, status: 'uninstalling' } : app
+          ),
+        });
       }
     } finally {
-      set({ isLoading: false });
+      if (requestId === applicationFetchSequence) set({ isLoading: false });
     }
   },
 
@@ -252,22 +262,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     return result.success;
   },
-  uninstallApplication: async (id, confirmUser = true): Promise<boolean> => {
-    if (confirmUser && !confirm('Are you sure you want to uninstall this application? All data within the app folder will be removed.')) {
+  uninstallApplication: async (id): Promise<boolean> => {
+    const app = get().applications.find((item) => item.id === id);
+    if (!app || app.status === 'uninstalling') return false;
+
+    applicationFetchSequence += 1;
+    set((state) => ({
+      isLoading: false,
+      applications: state.applications.map((item) =>
+        item.id === id ? { ...item, status: 'uninstalling', error: undefined } : item
+      ),
+    }));
+
+    let result;
+    try {
+      result = await window.electron.invoke(APP_DELETE, id);
+    } catch (error) {
+      applicationFetchSequence += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to uninstall application ${id}:`, error);
+      set((state) => ({
+        isLoading: false,
+        applications: state.applications.map((item) =>
+          item.id === id
+            ? { ...item, status: app.status, error: message }
+            : item
+        ),
+      }));
       return false;
     }
-    const result = await window.electron.invoke(APP_DELETE, id);
-    if (result.success) {
-      const app = get().applications.find((item) => item.id === id);
-      useLifecycleHistoryStore.getState().recordRuns(
-        'app',
-        id,
-        app?.name ?? id,
-        result.data?.lifecycleRuns,
-      );
-      await get().fetchApplications();
+    if (!result.success) {
+      applicationFetchSequence += 1;
+      const message = result.error || 'Failed to uninstall application.';
+      console.error(`Failed to uninstall application ${id}: ${message}`);
+      set((state) => ({
+        isLoading: false,
+        applications: state.applications.map((item) =>
+          item.id === id ? { ...item, status: app.status, error: message } : item
+        ),
+      }));
+      return false;
     }
-    return result.success;
+
+    useLifecycleHistoryStore.getState().recordRuns(
+      'app',
+      id,
+      app.name,
+      result.data?.lifecycleRuns,
+    );
+    applicationFetchSequence += 1;
+    set((state) => ({
+      applications: state.applications.filter((item) => item.id !== id),
+    }));
+    try {
+      await get().fetchApplications();
+    } catch (error) {
+      console.error(`Application ${id} was uninstalled, but the app list could not be refreshed:`, error);
+    }
+    return true;
   },
   refreshApplicationStatus: async (id) => {
     try {
@@ -277,6 +329,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set((state) => ({
         applications: state.applications.map((a) => {
           if (a.id !== id) return a;
+          if (a.status === 'uninstalling') return a;
           if (status === 'unknown') return { ...a, status: 'unknown', task: undefined };
           return {
             ...a,
@@ -292,7 +345,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (error) {
       console.error('Failed to check app status:', error);
       set((state) => ({
-        applications: state.applications.map((a) => (a.id === id ? { ...a, status: 'unknown', task: undefined } : a)),
+        applications: state.applications.map((a) =>
+          a.id === id && a.status !== 'uninstalling' ? { ...a, status: 'unknown', task: undefined } : a
+        ),
       }));
       return 'unknown';
     }

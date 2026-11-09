@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aisphere.dev/schemas/app-catalog.schema.json",
+  "title": "AiSphere App Catalog Export",
+  "description": "Combined catalog file written by Explore > Export in single-file mode. The $schema field points editors and validators at this schema; the schema field identifies the payload. apps contains one entry per application specification.",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "apps"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "Optional self-reference to this schema, written by Explore > Export."
+    },
+    "schema": {
+      "const": "aisphere.app-catalog"
+    },
+    "version": {
+      "const": 1
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries in apps. Informational; validators should trust the array length."
+    },
+    "apps": {
+      "type": "array",
+      "items": {
+        "$ref": "application-spec.schema.json"
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -8,6 +8,7 @@ export enum ServiceName {
   AppService = 'AppService',
   ExploreService = 'ExploreService',
   LanNasService = 'LanNasService',
+  RemoteAccessService = 'RemoteAccessService',
   SandboxService = 'SandboxService',
   EnvService = 'EnvService',
   AiServerManager = 'AiServerManager',

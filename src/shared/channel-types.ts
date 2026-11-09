@@ -1,5 +1,7 @@
 // All IPC channel type definitions for type-safe communication between main and renderer
 
+import type { DockerRegistryMirrorConfig } from './types';
+
 // App channels
 export const APP_INSTALL = 'app:install' as const;
 export const APP_LIST = 'app:list' as const;
@@ -26,6 +28,7 @@ export const SETTING_DELETE = 'setting:delete' as const;
 
 // System channels
 export const SYSTEM_INFO = 'system:info' as const;
+export const REMOTE_ACCESS_STATUS = 'remote-access:status' as const;
 export const RUNTIME_CHECK = 'runtime:check' as const;
 export const RUNTIME_INSTALL = 'runtime:install' as const;
 export const RUNTIME_UNINSTALL = 'runtime:uninstall' as const;
@@ -102,6 +105,15 @@ export interface RuntimeInstallStatusEvent {
   totalBytes?: number;
   /** Timestamp used to discard out-of-order updates. */
   at: number;
+}
+
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  listening: boolean;
+  port: number;
+  urls: string[];
+  token?: string;
+  error?: string;
 }
 
 export function runtimeInstallStatusChannel(type: string): string {
@@ -203,7 +215,9 @@ export interface RuntimeConfigSpec {
   name: string;
   hasEngine: boolean;
   autoStart: 'always' | 'never' | null;
-  /** Selected Docker Hub pull-through mirror; omitted by older exports. */
+  /** Ordered Docker Hub pull-through mirrors; omitted by older exports. */
+  dockerRegistryMirrors?: DockerRegistryMirrorConfig[];
+  /** @deprecated Single mirror from older exports; migrated on import. */
   dockerRegistryMirror?: string | null;
   installed: boolean;
   managed: boolean;

@@ -1,6 +1,6 @@
 import os from 'os';
 import { existsSync, mkdirSync, rmdirSync, rmSync } from 'fs';
-import { Application } from '../../src/types/api';
+import { AppInstallState, InstalledApplication } from '../../src/types/api';
 import { Downloader } from './downloader';
 import { Tar } from './tar';
 import { ServiceContainer } from '../services/ServiceContainer';
@@ -17,7 +17,7 @@ import { AppInstallControl } from './app-install-control';
  * Package utility to handle application installation lifecycle: download, unpack, and runtime setup.
  */
 export class Package {
-  private getProgressId(app: Application): string {
+  private getProgressId(app: InstalledApplication): string {
     return app.catalogId || app.id;
   }
 
@@ -29,7 +29,7 @@ export class Package {
     return ServiceContainer.getInstance().get(ServiceName.SandboxService) as SandboxService;
   }
 
-  async download(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
+  async download(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const logger = this.getLogger();
     const downloader = new Downloader(logger);
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
@@ -64,7 +64,7 @@ export class Package {
     return { success: true, data: app };
   }
 
-  async unpack(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async unpack(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     const logger = this.getLogger();
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
     const tar = new Tar();
@@ -95,11 +95,11 @@ export class Package {
     }
   }
 
-  async delete(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async delete(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     throw new Error('Method not implemented.');
   }
 
-  async runInstallScript(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
+  async runInstallScript(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     await control?.waitUntilResumed();
     const logger = this.getLogger();
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
@@ -148,7 +148,7 @@ export class Package {
    * @param app The application to install.
    * @param event Optional Electron IPC event for reporting progress.
    */
-  async install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
+  async install(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
     this.getLogger().info(`App home directory for ${app.name}: ${appSvc.getAppHomeDir(app)}`, 'Package');
 
@@ -192,7 +192,7 @@ export class Package {
         app.install = {
           ...app.install,
           installed: true,
-        } as Application['install'];
+        } as AppInstallState;
       }
       // Return the mutated application so the renderer can update the card's
       // installed state immediately instead of showing "Install" again.
@@ -205,7 +205,7 @@ export class Package {
     }
   }
 
-  async uninstall(app:Application, event?: any): Promise<IpcResponse<any>> {
+  async uninstall(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
     this.getLogger().info(`Uninstalling ${app.name}`, 'Package');
     this.getLogger().info(`Removing app package directory: ${appSvc.getAppPackageDir(app)}`, 'Package');
@@ -214,7 +214,7 @@ export class Package {
     rmSync(appSvc.getAppUserdataDir(app), { recursive: true });
     this.getLogger().info(`Removing app home directory: ${appSvc.getAppHomeDir(app)}`, 'Package');
     rmSync(appSvc.getAppHomeDir(app), { recursive: true });
-    app.install = undefined;
+    app.install = { installed: false };
     appSvc.updateApp(app.id, app);
     return { success: true };
   }

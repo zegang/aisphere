@@ -5,7 +5,7 @@ import { execFile, spawn } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, promises as fs } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import * as pty from 'node-pty';
-import { Application, AppRuntime, LifecycleAction, LifecycleActionHooks, LifecycleActionResult, LifecycleActionRun } from '../../src/types/api';
+import { InstalledApplication, AppRuntime, LifecycleAction, LifecycleActionHooks, LifecycleActionResult, LifecycleActionRun } from '../../src/types/api';
 import { LogService } from './LogService';
 import { RuntimeApptainer, RuntimePodman, RuntimeConda, RuntimeDocker, RuntimeClass, Runtime, Task } from '../utils/runtime';
 import { Service, ServiceName } from '../types/IService';
@@ -20,7 +20,7 @@ import type { AppInstallControl } from '../utils/app-install-control';
 import { DbStoreService } from './DbStoreService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
 import { NAMESPACE_DEFAULT, MODULE_APP, MODULE_SETTING } from '../../src/shared/modules';
-import { DOCKER_REGISTRY_MIRRORS, SettingKey } from '../../src/shared/types';
+import { DockerRegistryMirrorConfig, SettingKey, normalizeDockerRegistryMirrors, parseDockerRegistryMirrors } from '../../src/shared/types';
 import {
   ENGINE_CHAT,
   ENGINE_CHAT_STREAM,
@@ -129,7 +129,7 @@ export class RuntimeService implements Service {
 
   async getShutdownStatus(): Promise<{ apps: string[]; runtimes: string[]; installs: string[] }> {
     await this.refreshPersistedApplicationStatuses();
-    const apps = (await this.getAppStore().list()) as Application[];
+    const apps = (await this.getAppStore().list()) as InstalledApplication[];
     const runningApps = apps
       .filter((app) => ['running', 'paused', 'starting', 'pausing', 'stopping'].includes(app.task?.status ?? ''))
       .map((app) => app.name);
@@ -149,7 +149,7 @@ export class RuntimeService implements Service {
 
   async refreshPersistedApplicationStatuses(): Promise<void> {
     const store = this.getAppStore();
-    const apps = (await store.list()) as Application[];
+    const apps = (await store.list()) as InstalledApplication[];
     for (const app of apps.filter((candidate) => candidate.task?.id)) {
       const task = { ...app.task!, app } as Task;
       try {
@@ -181,7 +181,7 @@ export class RuntimeService implements Service {
     }
 
     this.getLogger().info('Stopping running applications and managed runtime engines before exit.', this.name);
-    const apps = await this.getAppStore().list() as Application[];
+    const apps = await this.getAppStore().list() as InstalledApplication[];
     const activeApps = apps.filter((candidate) =>
       candidate.task?.id &&
       ['running', 'paused', 'starting', 'pausing', 'stopping'].includes(candidate.task.status)
@@ -242,7 +242,7 @@ export class RuntimeService implements Service {
   }
 
   async runAppLifecycleActions(
-    app: Application,
+    app: InstalledApplication,
     hook: 'postInstallActions' | 'postStopActions' | 'postUnInstallActions',
   ): Promise<LifecycleActionResult[]> {
     const actions = app[hook];
@@ -1523,7 +1523,7 @@ export class RuntimeService implements Service {
     return this.runtimes[rc]!;
   }
 
-  async install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
+  async install(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const rc = (app.runtime as any)?.runtime as RuntimeClass;
     if (!rc) {
       throw new Error(`Application ${app.name} does not specify a valid runtime type.`);
@@ -1531,7 +1531,7 @@ export class RuntimeService implements Service {
     return this.getRuntime(rc).install(app, event, control);
   }
 
-  async run(app: Application): Promise<Task> {
+  async run(app: InstalledApplication): Promise<Task> {
     const runtimeConfig = app.runtime as { runtime: RuntimeClass; options?: string[]; startscript?: string; args?: string[] };
     const rc = runtimeConfig?.runtime;
     if (!rc) {
@@ -1613,7 +1613,7 @@ export class RuntimeService implements Service {
   }
 
   // Pause all tasks in the application
-  async pause(app: Application): Promise<void> {
+  async pause(app: InstalledApplication): Promise<void> {
     const tasks = Object.values(this.tasks).filter(t => t.app.id === app.id);
     for (const task of tasks) {
       const runtime = this.getRuntime(task.rc);
@@ -1623,7 +1623,7 @@ export class RuntimeService implements Service {
   }
 
   // Stop all tasks in the application
-  async stop(app: Application): Promise<LifecycleActionResult[]> {
+  async stop(app: InstalledApplication): Promise<LifecycleActionResult[]> {
     const taskId = app.task?.id;
     if (taskId) {
       const task = this.tasks[taskId] ?? { ...app.task, app } as Task;
@@ -1637,19 +1637,19 @@ export class RuntimeService implements Service {
     return this.runAppLifecycleActions(app, 'postStopActions');
   }
 
-  getShellConfig(app: Application): { command: string; args: string[] } {
+  getShellConfig(app: InstalledApplication): { command: string; args: string[] } {
     return this.getRuntimeForApp(app).getShellConfig(this.getLiveTask(app));
   }
 
-  getLogsConfig(app: Application): { command: string; args: string[] } {
+  getLogsConfig(app: InstalledApplication): { command: string; args: string[] } {
     return this.getRuntimeForApp(app).getLogsConfig(this.getLiveTask(app));
   }
 
-  shellAttach(app: Application): { command: string; args: string[] } {
+  shellAttach(app: InstalledApplication): { command: string; args: string[] } {
     return this.getRuntimeForApp(app).shellAttach(this.getLiveTask(app));
   }
 
-  async openInteractiveShell(app: Application): Promise<void> {
+  async openInteractiveShell(app: InstalledApplication): Promise<void> {
     return this.getRuntimeForApp(app).openInteractiveShell(this.getLiveTask(app));
   }
 
@@ -1662,7 +1662,7 @@ export class RuntimeService implements Service {
     return task.status;
   }
 
-  async inspect(app: Application): Promise<Record<string, any>> {
+  async inspect(app: InstalledApplication): Promise<Record<string, any>> {
     const rc = (app.runtime as any)?.runtime as RuntimeClass;
     if (!rc) throw new Error(`Application ${app.name} does not specify a valid runtime type.`);
     return this.getRuntime(rc).inspect(app);
@@ -1671,7 +1671,7 @@ export class RuntimeService implements Service {
   /**
    * Helper to retrieve the current active task from memory based on the application's metadata.
    */
-  private getLiveTask(app: Application): Task {
+  private getLiveTask(app: InstalledApplication): Task {
     const taskId = app.task?.id;
     if (!taskId) throw new Error(`No active task ID found for ${app.name}`);
 
@@ -1686,7 +1686,7 @@ export class RuntimeService implements Service {
   /**
    * Helper to get the correct runtime implementation for an application.
    */
-  private getRuntimeForApp(app: Application): Runtime {
+  private getRuntimeForApp(app: InstalledApplication): Runtime {
     const rc = app.task?.rc || (app.runtime as any)?.runtime;
     if (!rc) throw new Error(`No runtime class found for ${app.name}`);
     return this.getRuntime(rc as RuntimeClass);
@@ -1700,7 +1700,7 @@ export class RuntimeService implements Service {
   }
 
   /** Container port the inference server listens on (`--port`, default 8080). */
-  private containerPortOf(app: Application): string {
+  private containerPortOf(app: InstalledApplication): string {
     const args = app.runtime?.args ?? app.task?.args ?? [];
     for (let i = 0; i < args.length; i += 1) {
       if (args[i] === '--port' && /^\d+$/.test(args[i + 1] ?? '')) return args[i + 1];
@@ -1724,7 +1724,7 @@ export class RuntimeService implements Service {
    * container inspect) is authoritative; when it is missing the runtime options
    * (`-p 8091:8080`, `--publish`, …) are parsed as a fallback.
    */
-  private resolveEngineBaseUrl(app: Application, task?: Task): string | null {
+  private resolveEngineBaseUrl(app: InstalledApplication, task?: Task): string | null {
     const hostPorts = task?.hostPorts ?? app.task?.hostPorts ?? {};
     const containerPort = this.containerPortOf(app);
     const known = hostPorts[containerPort] ?? Object.values(hostPorts)[0];
@@ -1770,7 +1770,7 @@ export class RuntimeService implements Service {
       .map((message) => ({ role: message.role, content: message.content.slice(0, 12_000) }));
     if (messages.length === 0) throw new Error('The chat message is empty.');
 
-    const app = await this.getAppStore().get(req.appId) as Application | undefined;
+    const app = await this.getAppStore().get(req.appId) as InstalledApplication | undefined;
     if (!app) throw new Error(`Engine app ${req.appId} was not found.`);
     if (!app.install?.installed) throw new Error(`The ${app.name} app is not installed.`);
 
@@ -1954,16 +1954,32 @@ export class RuntimeService implements Service {
     return !!runtime?.installed;
   }
 
-  async getDockerRegistryMirror(): Promise<string | undefined> {
-    const records = await this.getSettingStore().getBy<{ id: string; key: string; value: string }>({
+  /**
+   * Ordered Docker Hub pull-through mirrors configured by the user. Reads the
+   * new JSON list, falls back to the legacy single-mirror setting and migrates
+   * it so upgrades keep the user's previous choice.
+   */
+  async getDockerRegistryMirrors(): Promise<DockerRegistryMirrorConfig[]> {
+    const store = this.getSettingStore();
+    const records = await store.getBy<{ id: string; key: string; value: string }>({
+      key: SettingKey.DockerRegistryMirrors,
+    });
+    if (records.length > 0) {
+      return parseDockerRegistryMirrors(records[0].value);
+    }
+
+    const legacy = await store.getBy<{ id: string; key: string; value: string }>({
       key: SettingKey.DockerRegistryMirror,
     });
-    const mirror = records[0]?.value;
-    if (!mirror) return undefined;
-    if ((DOCKER_REGISTRY_MIRRORS as readonly string[]).includes(mirror)) return mirror;
+    const legacyValue = legacy[0]?.value;
+    if (typeof legacyValue !== 'string' || !legacyValue.trim()) return [];
 
-    this.getLogger().warn(`Ignoring unsupported Docker registry mirror setting: ${mirror}`, this.name);
-    return undefined;
+    const migrated = parseDockerRegistryMirrors(legacyValue);
+    if (migrated.length > 0) {
+      await this.writeDockerRegistryMirrors(migrated);
+      this.getLogger().info(`Migrated Docker registry mirror setting to ${migrated.length} entry(ies)`, this.name);
+    }
+    return migrated;
   }
 
   /** Current autoStart preference of a runtime ('always' | 'never' | null). */
@@ -2007,7 +2023,7 @@ export class RuntimeService implements Service {
         name: builtin?.name ?? runtimeLabel(type),
         hasEngine: builtin?.hasEngine ?? (type === 'docker' || type === 'podman'),
         autoStart: (await this.readRuntimeAutoStart(type)) ?? builtin?.autoStart ?? null,
-        dockerRegistryMirror: type === 'docker' ? (await this.getDockerRegistryMirror()) ?? null : undefined,
+        dockerRegistryMirrors: type === 'docker' ? await this.getDockerRegistryMirrors() : undefined,
         installed: !!probe?.installed,
         managed: !!probe?.managed,
         version: probe?.version,
@@ -2139,8 +2155,8 @@ export class RuntimeService implements Service {
         }
         seen.add(spec.type);
         await this.writeRuntimeAutoStart(spec.type, spec.autoStart);
-        if (spec.type === 'docker' && spec.dockerRegistryMirror !== undefined) {
-          await this.writeDockerRegistryMirror(spec.dockerRegistryMirror);
+        if (spec.type === 'docker' && spec.dockerRegistryMirrors !== undefined) {
+          await this.writeDockerRegistryMirrors(spec.dockerRegistryMirrors);
         }
         imported.push({ type: spec.type, name: spec.name, autoStart: spec.autoStart });
         this.getLogger().info(`Imported runtime configuration for ${spec.type}: autoStart=${spec.autoStart ?? 'unset'}`, this.name);
@@ -2165,31 +2181,33 @@ export class RuntimeService implements Service {
     if (obj.autoStart !== undefined && obj.autoStart !== null && obj.autoStart !== 'unset' && autoStart === null) {
       return null; // invalid non-empty autoStart value
     }
-    if (
-      type === 'docker' &&
-      obj.dockerRegistryMirror !== undefined &&
-      obj.dockerRegistryMirror !== null &&
-      !(DOCKER_REGISTRY_MIRRORS as readonly unknown[]).includes(obj.dockerRegistryMirror)
-    ) {
-      return null;
+    let dockerRegistryMirrors: DockerRegistryMirrorConfig[] | undefined;
+    if (type === 'docker') {
+      if (obj.dockerRegistryMirrors !== undefined) {
+        if (obj.dockerRegistryMirrors !== null && !Array.isArray(obj.dockerRegistryMirrors)) return null;
+        dockerRegistryMirrors = normalizeDockerRegistryMirrors(obj.dockerRegistryMirrors);
+      } else if (obj.dockerRegistryMirror !== undefined && obj.dockerRegistryMirror !== null) {
+        if (typeof obj.dockerRegistryMirror !== 'string') return null;
+        dockerRegistryMirrors = parseDockerRegistryMirrors(obj.dockerRegistryMirror);
+      }
     }
     return {
       type,
       name: String(obj.name ?? runtimeLabel(type)),
       hasEngine: obj.hasEngine !== undefined ? !!obj.hasEngine : type === 'docker' || type === 'podman',
       autoStart: autoStart as 'always' | 'never' | null,
-      dockerRegistryMirror: type === 'docker' ? obj.dockerRegistryMirror ?? null : undefined,
+      dockerRegistryMirrors,
       installed: !!obj.installed,
       managed: !!obj.managed,
       version: obj.version !== undefined ? String(obj.version) : undefined,
     };
   }
 
-  private async writeDockerRegistryMirror(mirror: string | null): Promise<void> {
+  private async writeDockerRegistryMirrors(mirrors: DockerRegistryMirrorConfig[]): Promise<void> {
     const store = this.getSettingStore();
-    const key = SettingKey.DockerRegistryMirror;
+    const key = SettingKey.DockerRegistryMirrors;
     const records = await store.getBy<{ id: string; key: string; value: string }>({ key });
-    const value = mirror ?? '';
+    const value = JSON.stringify(normalizeDockerRegistryMirrors(mirrors));
     if (records.length > 0) {
       await store.update(records[0].id, { ...records[0], key, value });
     } else {

@@ -59,6 +59,24 @@ Password authentication is enabled by default. Each time the service starts, AiS
 
 For a Docker-based alternative, install **File Browser NAS** from **Explore**. Its files, settings, and database are persisted in its AiSphere app data folder; the web UI is available at `http://localhost:8093` after starting the app. Docker must be installed and running.
 
+## Docker Hub registry mirrors
+
+Open **Runtimes → Docker → Docker Hub registry mirrors** to add your own pull-through mirrors. Each mirror can be enabled or disabled, and the list order is the order AiSphere tries. When an app needs a public Docker Hub image, AiSphere pulls through the enabled mirrors in sequence and stops at the first success; if every mirror fails, it pulls directly from Docker Hub. Images hosted on other registries (for example `ghcr.io`) are always pulled directly. This setting only affects images pulled by AiSphere and does not change Docker Desktop's global configuration.
+
+## Access AiSphere from a browser on your local network
+
+AiSphere can serve its desktop interface to other devices on your network. In
+`resources/config/config.json`, set `networkAccess.enabled` to `true` and choose
+an available TCP port between 1024 and 65535, then restart AiSphere. The default
+configuration keeps network access disabled and uses port `3210`.
+
+Open **Settings** in the desktop app to find the LAN address and copy the
+authentication token. Enter the token in the browser sign-in page on the other
+device. Anyone with this token can control AiSphere and run apps on the host;
+use this only on a trusted local network and keep the token private. The browser
+server uses HTTP, not HTTPS. Your operating-system firewall may need to allow
+AiSphere on the selected port and private networks.
+
 ## Build and Run on Windows
 
 The repository ships self-contained scripts for Windows 11. They bootstrap a portable

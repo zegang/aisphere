@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import {
-  ArrowLeft, Box, Calendar, Terminal, Play, Square, Trash2,
+  ArrowLeft, Box, Calendar, Terminal, Play, Square, Trash2, Loader2,
   Shield, Cpu, Layout, Tag, Folder, X, Maximize, Minimize2, Activity, Info,
   Settings, Edit2, Save, AlertCircle, FileText, ExternalLink, Globe
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { AppInstallControls } from '@/components/AppInstallControls';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
+import { AppUninstallDialog } from '@/components/AppUninstallDialog';
 import type { AppInstallStatus } from '@/shared/channel-types';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
@@ -211,6 +212,7 @@ export default function AppWorkspace() {
   const [activeWebUrl, setActiveWebUrl] = useState<string | null>(pendingWebUrl);
   const [inspectData, setInspectData] = useState<any>(null);
   const [isEditingRuntime, setIsEditingRuntime] = useState(false);
+  const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
   const [tempRuntime, setTempRuntime] = useState({
     args: '',
     options: '',
@@ -219,9 +221,11 @@ export default function AppWorkspace() {
   const app = applications.find(a => a.id === selectedId);
   const lifecycleResults = app ? lifecycleResultsByAppId[app.id] : undefined;
   const installStatus = app?.install?.status;
-  const appStatus = installStatus && ['installing', 'paused', 'aborting', 'aborted'].includes(installStatus)
-    ? installStatus
-    : app?.task?.status || 'stopped';
+  const appStatus = app?.status === 'uninstalling'
+    ? 'uninstalling'
+    : installStatus && ['installing', 'paused', 'aborting', 'aborted'].includes(installStatus)
+      ? installStatus
+      : app?.task?.status || 'stopped';
 
   const updateInstallStatus = (status: AppInstallStatus) => {
     if (!app) return;
@@ -238,6 +242,13 @@ export default function AppWorkspace() {
     clearPendingWebUrl();
   }, [pendingWebUrl, clearPendingWebUrl]);
 
+  useEffect(() => {
+    if (app) {
+      refreshApplicationStatus(app.id);
+      inspectApplication(app.id).then(data => setInspectData(data));
+    }
+  }, [app?.id, inspectApplication, refreshApplicationStatus]);
+
   if (!app) {
     return (
       <div className="p-6">
@@ -251,22 +262,17 @@ export default function AppWorkspace() {
     );
   }
 
-  useEffect(() => {
-    if (app) {
-      refreshApplicationStatus(app.id);
-      inspectApplication(app.id).then(data => setInspectData(data));
-    }
-  }, [app?.id, inspectApplication, refreshApplicationStatus]);
-
-  const handleUninstall = async () => {
+  const handleUninstall = () => {
     if (appStatus !== 'stopped' && appStatus !== 'failed' && appStatus !== 'unknown') {
       alert(t('apps.workspace.running_tasks'));
       return;
     }
-    if (window.confirm(t('app.uninstall_confirm') + '?' || 'Are you sure you want to uninstall this application?')) {
-      setView('apps');
-      await uninstallApplication(app.id);
-    }
+    setUninstallConfirmOpen(true);
+  };
+
+  const confirmUninstall = async () => {
+    setUninstallConfirmOpen(false);
+    if (await uninstallApplication(app.id)) setView('apps');
   };
 
   const handleSaveRuntime = async () => {
@@ -317,11 +323,12 @@ export default function AppWorkspace() {
                       ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                       : appStatus === 'installing' || appStatus === 'aborting'
                       ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                      : appStatus === 'failed'
+                      : appStatus === 'failed' || appStatus === 'uninstalling'
                       ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                       : 'bg-gray-100 text-gray-600 dark:bg-dark-muted dark:text-dark-subtle'
                   }`}
                 >
+                  {appStatus === 'uninstalling' && <Loader2 className="h-3 w-3 animate-spin" />}
                   {t(`apps.status.${appStatus}`, { defaultValue: appStatus })}
                 </span>
               </div>
@@ -361,23 +368,32 @@ export default function AppWorkspace() {
           )}
           <button
             onClick={handleUninstall}
-            disabled={['installing', 'paused', 'aborting'].includes(installStatus ?? '')}
-            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-light-border dark:border-dark-border hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/10 transition-colors"
+            disabled={['installing', 'paused', 'aborting'].includes(installStatus ?? '') || appStatus === 'uninstalling'}
+            className="flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Trash2 className="w-4 h-4" /> {t('app.uninstall')}
+            {appStatus === 'uninstalling' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            {appStatus === 'uninstalling' ? t('apps.status.uninstalling') : t('app.uninstall')}
           </button>
         </div>
       </div>
+
+      {uninstallConfirmOpen && (
+        <AppUninstallDialog
+          appName={app.name}
+          onCancel={() => setUninstallConfirmOpen(false)}
+          onConfirm={() => void confirmUninstall()}
+        />
+      )}
 
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-6xl mx-auto space-y-6">
           <LifecycleHistory ownerType="app" ownerId={app.id} />
-          {appStatus === 'failed' && app.error && (
+          {app.error && (
             <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/50 rounded-xl p-4 flex items-start gap-3 text-red-700 dark:text-red-400 animate-in fade-in slide-in-from-top-2 duration-300">
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <div className="flex-1">
-                <h4 className="font-bold text-sm">{t('apps.workspace.launch_failed')}</h4>
+                <h4 className="font-bold text-sm">{t('apps.workspace.operation_error')}</h4>
                 <p className="text-xs mt-1 opacity-90 leading-relaxed font-mono break-all">{app.error}</p>
               </div>
               <button

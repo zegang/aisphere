@@ -9,6 +9,7 @@ import { LAN_NAS_APP_ID, LAN_NAS_START, LAN_NAS_STATUS, LAN_NAS_STOP, RUNTIME_EN
 import type { AppInstallStatus } from '@/shared/channel-types';
 import { AppInstallControls } from '@/components/AppInstallControls';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
+import { AppUninstallDialog } from '@/components/AppUninstallDialog';
 
 export default function AppsPage() {
   const { t, i18n } = useTranslation();
@@ -34,6 +35,7 @@ export default function AppsPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -141,6 +143,7 @@ export default function AppsPage() {
   const selectableApps = applications.filter((app) =>
     app.catalogId !== LAN_NAS_APP_ID &&
     app.id !== LAN_NAS_APP_ID &&
+    app.status !== 'uninstalling' &&
     !['installing', 'paused', 'aborting'].includes(app.install?.status ?? '')
   );
   const selectedApps = selectableApps.filter((app) => selectedIds.includes(app.id));
@@ -211,7 +214,7 @@ export default function AppsPage() {
   };
 
   const runBatchUninstall = async () => {
-    if (!selectedApps.length || !window.confirm(t('apps.batch.uninstall_confirm', { count: selectedApps.length }))) return;
+    if (!selectedApps.length) return;
     setBatchBusy(true);
     setBatchError(null);
     const failed: string[] = [];
@@ -225,7 +228,7 @@ export default function AppsPage() {
             continue;
           }
         }
-        if (!(await uninstallApplication(app.id, false))) {
+        if (!(await uninstallApplication(app.id))) {
           failed.push(app.name);
           failedIds.add(app.id);
         }
@@ -319,7 +322,7 @@ export default function AppsPage() {
                   <button type="button" onClick={runBatchStop} disabled={batchBusy || stoppableApps.length === 0} className="flex items-center gap-1.5 rounded-lg bg-orange-100 px-3 py-2 text-xs font-medium text-orange-700 transition-colors hover:bg-orange-200 disabled:opacity-50 dark:bg-orange-900/20 dark:text-orange-400">
                     <Square className="w-3.5 h-3.5" />{t('apps.batch.stop')}
                   </button>
-                  <button type="button" onClick={runBatchUninstall} disabled={batchBusy} className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50">
+                  <button type="button" onClick={() => setUninstallConfirmOpen(true)} disabled={batchBusy} className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-50">
                     <Trash2 className="w-3.5 h-3.5" />{t('apps.batch.uninstall')}
                   </button>
                   <button type="button" onClick={() => setSelectedIds([])} disabled={batchBusy} className="rounded-lg px-3 py-2 text-xs text-light-subtle transition-colors hover:bg-light-surface disabled:opacity-50 dark:text-dark-subtle dark:hover:bg-dark-surface">
@@ -347,12 +350,14 @@ export default function AppsPage() {
             const installStatus = app.install?.status;
             const status = isNas
               ? nasStatus ? (nasStatus.running ? 'running' : 'stopped') : 'unknown'
-              : installStatus && ['installing', 'paused', 'aborting', 'failed', 'aborted'].includes(installStatus)
+              : app.status === 'uninstalling'
+                ? 'uninstalling'
+                : installStatus && ['installing', 'paused', 'aborting', 'failed', 'aborted'].includes(installStatus)
                 ? installStatus
                 : (app.task?.status || 'stopped');
-            const busy = isNas ? nasBusy : ['installing', 'paused', 'aborting'].includes(installStatus ?? '') || status === 'starting' || status === 'stopping';
+            const busy = isNas ? nasBusy : ['installing', 'paused', 'aborting'].includes(installStatus ?? '') || ['starting', 'stopping', 'uninstalling'].includes(status);
             const running = status === 'running';
-            const canOpenWorkspace = app.install?.installed !== false && !['installing', 'paused', 'aborting'].includes(installStatus ?? '');
+            const canOpenWorkspace = app.install?.installed !== false && status !== 'uninstalling' && !['installing', 'paused', 'aborting'].includes(installStatus ?? '');
             const hostPort = app.task?.hostPorts
               ? (app.task.hostPorts['8080'] || Object.values(app.task.hostPorts)[0])
               : undefined;
@@ -392,7 +397,7 @@ export default function AppsPage() {
               <div
                 key={app.id}
                 onClick={() => {
-                  if (selectionMode && !isNas && !['installing', 'paused', 'aborting'].includes(installStatus ?? '')) {
+                  if (selectionMode && !isNas && status !== 'uninstalling' && !['installing', 'paused', 'aborting'].includes(installStatus ?? '')) {
                     toggleSelectedApp(app.id);
                   } else if (isNas) openNasManager();
                   else if (runnable && canOpenWorkspace) openWorkspace(app.id);
@@ -406,7 +411,7 @@ export default function AppsPage() {
                 {/* Top row: icon + status only, so the status text never gets
                     squeezed by the title. Title and install date live below. */}
                 <div className="flex items-start justify-between mb-3">
-                  {selectionMode && !isNas && !['installing', 'paused', 'aborting'].includes(installStatus ?? '') && (
+                  {selectionMode && !isNas && status !== 'uninstalling' && !['installing', 'paused', 'aborting'].includes(installStatus ?? '') && (
                     <input
                       type="checkbox"
                       aria-label={t('apps.batch.select_app', { name: app.name })}
@@ -424,15 +429,17 @@ export default function AppsPage() {
                       <Box className="w-6 h-6" />
                     </div>
                   )}
-                  {(app.task?.status === 'uninstalling' || ['installing', 'aborting'].includes(installStatus ?? '')) && (
+                  {['installing', 'aborting'].includes(installStatus ?? '') && (
                     <div className="absolute top-4 right-4">
-                      <RefreshCw className={`w-4 h-4 animate-spin ${app.task?.status === 'uninstalling' ? 'text-red-500' : 'text-blue-500'}`} />
+                      <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
                     </div>
                   )}
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${statusTone.badge}`}
                   >
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusTone.dot}`} />
+                    {status === 'uninstalling'
+                      ? <RefreshCw className="h-3 w-3 shrink-0 animate-spin" />
+                      : <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusTone.dot}`} />}
                     {t(`apps.status.${status}`, { defaultValue: status })}
                   </span>
                 </div>
@@ -573,6 +580,18 @@ export default function AppsPage() {
           })
         )}
       </div>
+
+      {uninstallConfirmOpen && (
+        <AppUninstallDialog
+          appName={selectedApps.length === 1 ? selectedApps[0].name : undefined}
+          count={selectedApps.length === 1 ? undefined : selectedApps.length}
+          onCancel={() => setUninstallConfirmOpen(false)}
+          onConfirm={() => {
+            setUninstallConfirmOpen(false);
+            void runBatchUninstall();
+          }}
+        />
+      )}
 
       {nasOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !nasBusy && setNasOpen(false)}>

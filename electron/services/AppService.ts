@@ -4,7 +4,7 @@ import {
   APP_CREATE, APP_DELETE, APP_DETAIL, APP_LIST, APP_OPEN_INTERACTIVE_SHELL, APP_START, APP_STATUS, APP_STOP, APP_UPDATE, APP_INSTALL, IpcResponse,
   TERMINAL_CLOSE, TERMINAL_INIT, TERMINAL_INPUT, TERMINAL_LOGS, TERMINAL_RESIZE,
 } from '../../src/shared/channel-types';
-import { Application, LifecycleActionRun } from '../../src/types/api';
+import { InstalledApplication, LifecycleActionRun } from '../../src/types/api';
 import { LogService } from './LogService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
 import { DbStoreService } from './DbStoreService';
@@ -37,19 +37,21 @@ export class AppService implements Service {
     return ServiceContainer.getInstance().get(ServiceName.RuntimeService) as RuntimeService;
   }
 
-  getAppHomeDir(app: Application): string {
-    if (app.apphomedir) {
-      return app.apphomedir;
+  getAppHomeDir(app: InstalledApplication): string {
+    if (!app.apphomedir) {
+      const settingSvc = ServiceContainer.getInstance().get<SettingService>(ServiceName.SettingService);
+      app.apphomedir = join(settingSvc.getAppInstallDir(), app.id);
     }
-    const settingSvc = ServiceContainer.getInstance().get<SettingService>(ServiceName.SettingService);
-    app.apphomedir = join(settingSvc.getAppInstallDir(), app.id);
+    // The folder can disappear after installation (manual cleanups, failed
+    // moves, external tools). Recreate it so commands that use it as their
+    // working directory fail for a real reason instead of spawn ENOENT.
     if (!existsSync(app.apphomedir)) {
       mkdirSync(app.apphomedir, { recursive: true });
     }
     return app.apphomedir;
   }
 
-  getAppPackageDir(app: Application): string {
+  getAppPackageDir(app: InstalledApplication): string {
     if (!app.apphomedir) {
       throw new Error('Missing apphomedir');
     }
@@ -60,7 +62,7 @@ export class AppService implements Service {
     return pkgPath;
   }
 
-  getAppUserdataDir(app: Application): string {
+  getAppUserdataDir(app: InstalledApplication): string {
     if (!app.apphomedir) {
       throw new Error('Missing apphomedir');
     }
@@ -84,10 +86,10 @@ export class AppService implements Service {
     this.ptySessions.clear();
   }
 
-  private async getUniqueApps(): Promise<Application[]> {
+  private async getUniqueApps(): Promise<InstalledApplication[]> {
     const store = this.getDBStore();
-    const apps = await store.list() as Application[];
-    const unique = new Map<string, Application>();
+    const apps = await store.list() as InstalledApplication[];
+    const unique = new Map<string, InstalledApplication>();
     for (const app of apps) {
       const key = app.catalogId || app.id;
       const current = unique.get(key);
@@ -96,7 +98,7 @@ export class AppService implements Service {
         continue;
       }
 
-      const rank = (candidate: Application) =>
+      const rank = (candidate: InstalledApplication) =>
         Number(candidate.install?.installed) * 2 + Number(!!candidate.task) + Number(!!candidate.lanNasConfig);
       if (rank(app) > rank(current)) {
         unique.set(key, app);
@@ -110,20 +112,20 @@ export class AppService implements Service {
     return [...unique.values()];
   }
 
-  async installApp(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async installApp(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     const pkg = new Package();
     return pkg.install(app, event);
   }
 
-  async listApps(): Promise<Application[]> {
+  async listApps(): Promise<InstalledApplication[]> {
     return this.getUniqueApps();
   }
 
-  async getAppByCatalogId(catalogId: string): Promise<Application | undefined> {
+  async getAppByCatalogId(catalogId: string): Promise<InstalledApplication | undefined> {
     return (await this.getUniqueApps()).find((app) => app.catalogId === catalogId || app.id === catalogId);
   }
 
-  async createApp(app: Application): Promise<string> {
+  async createApp(app: InstalledApplication): Promise<string> {
     const catalogId = app.catalogId;
     if (catalogId) {
       const existing = await this.getAppByCatalogId(catalogId);
@@ -135,11 +137,11 @@ export class AppService implements Service {
     return this.getDBStore().insert(app);
   }
 
-  getAppById(id: string): Promise<Application | undefined> {
+  getAppById(id: string): Promise<InstalledApplication | undefined> {
     return this.getDBStore().get(id);
   }
 
-  updateApp(id: string, app: Application) {
+  updateApp(id: string, app: InstalledApplication) {
     return this.getDBStore().update(id, app);
   }
 
@@ -147,21 +149,21 @@ export class AppService implements Service {
     return this.getDBStore().delete(id);
   }
 
-  startApp(app: Application) {
+  startApp(app: InstalledApplication) {
     this.getLogger().info(`Starting app ${app.name}`, 'AppService');
     return this.getRuntimeService().run(app);
   }
 
-  stopApp(app: Application) {
+  stopApp(app: InstalledApplication) {
     this.getLogger().info(`Stopping app ${app.name}`, 'AppService');
     return this.getRuntimeService().stop(app);
   }
 
-  pauseApp(app: Application) {
+  pauseApp(app: InstalledApplication) {
     return this.getRuntimeService().pause(app);
   }
 
-  async openInteractiveShell(app: Application) {
+  async openInteractiveShell(app: InstalledApplication) {
     this.getLogger().info(`Opening interactive shell for app ${app.name}`, 'AppService');
     try {
       await this.getRuntimeService().openInteractiveShell(app);
@@ -184,12 +186,12 @@ export class AppService implements Service {
       return { success: true, data: { app } };
     });
 
-    ipcMain.handle(APP_CREATE, async (_event, app: Application) => {
+    ipcMain.handle(APP_CREATE, async (_event, app: InstalledApplication) => {
       const id = await this.createApp(app);
       return { success: true, data: { id } };
     });
 
-    ipcMain.handle(APP_INSTALL, async (_event, app: Application) => {
+    ipcMain.handle(APP_INSTALL, async (_event, app: InstalledApplication) => {
       this.installApp(app);
     });
 

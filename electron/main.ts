@@ -18,6 +18,8 @@ import { ServiceName } from './types/IService';
 import { SystemService } from './services/SystemService';
 import { SandboxService } from './services/SandboxService';
 import { LanNasService } from './services/LanNasService';
+import { RemoteAccessService } from './services/RemoteAccessService';
+import { captureRemoteIpcHandlers } from './utils/remote-ipc-registry';
 import { getDataRootDir } from './utils/app-paths';
 
 if (process.platform === 'linux') {
@@ -147,6 +149,7 @@ function createWindow(): void {
 }
 
 function initServices(): Promise<void> {
+  captureRemoteIpcHandlers();
   ServiceContainer.getInstance().register(ServiceName.LogService, new LogService());
   const logService = ServiceContainer.getInstance().get(ServiceName.LogService) as LogService;
   logService.info('Running on platform ' + process.platform);
@@ -170,6 +173,8 @@ function initServices(): Promise<void> {
   ServiceContainer.getInstance().register(ServiceName.AppService, new AppService());
   ServiceContainer.getInstance().register(ServiceName.LanNasService, new LanNasService());
   ServiceContainer.getInstance().register(ServiceName.ExploreService, new ExploreService());
+  const remoteAccessService = new RemoteAccessService();
+  ServiceContainer.getInstance().register(ServiceName.RemoteAccessService, remoteAccessService);
   const exploreService = ServiceContainer.getInstance().get<ExploreService>(ServiceName.ExploreService);
   const runtimeService = ServiceContainer.getInstance().get<RuntimeService>(ServiceName.RuntimeService);
   const sendShutdownProgress = (progress: AppShutdownProgressEvent) => {
@@ -181,6 +186,7 @@ function initServices(): Promise<void> {
   exploreService.setShutdownProgressHandler(sendShutdownProgress);
 
   registerHandlers(ipcMain);
+  const startRemoteAccess = remoteAccessService.start();
 
   const settingService = ServiceContainer.getInstance().get(ServiceName.SettingService) as SettingService;
 
@@ -223,12 +229,12 @@ function initServices(): Promise<void> {
 
   // Give the root directory setting a valid default so the settings page shows
   // the real data location instead of an empty or Linux-only placeholder.
-  return Promise.all([
+  return startRemoteAccess.then(() => Promise.all([
     settingService.ensureDefault(SettingKey.RootDirectory, getDataRootDir()),
     settingService.ensureDefault(SettingKey.RuntimeAutoInstall, 'ask'),
     settingService.ensureDefault(SettingKey.DockerRegistryMirror, ''),
     settingService.ensureDefault(SettingKey.StopRuntimesOnExit, 'always'),
-  ]).then(async () => {
+  ])).then(async () => {
     await (ServiceContainer.getInstance().get(ServiceName.RuntimeService) as RuntimeService)
       .refreshPersistedApplicationStatuses();
   });

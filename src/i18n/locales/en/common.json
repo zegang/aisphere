@@ -220,11 +220,25 @@
       "engine_info": "Engine information"
     },
     "docker_config": {
-      "title": "Docker Hub registry mirror",
-      "hint": "AiSphere uses this mirror for public Docker Hub image pulls. If a mirror cannot provide an image, it retries directly from Docker Hub. This does not change Docker Desktop's global settings.",
+      "title": "Docker Hub registry mirrors",
+      "hint": "AiSphere tries enabled mirrors in order for public Docker Hub image pulls, then falls back to Docker Hub directly. This does not change Docker Desktop's global settings.",
+      "empty": "No registry mirrors configured. Public images are pulled directly from Docker Hub.",
+      "add_label": "Add a registry mirror",
+      "add_placeholder": "https://mirror.example.com",
+      "add": "Add",
+      "suggestions": "Suggested:",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "enable": "Enable mirror",
+      "disable": "Disable mirror",
+      "move_up": "Move up",
+      "move_down": "Move down",
+      "remove": "Remove",
+      "invalid": "Enter a valid http(s) mirror address without credentials, query, or fragment.",
+      "duplicate": "This mirror is already in the list.",
       "direct": "Use Docker Hub directly",
       "saving": "Saving…",
-      "failed": "Could not load or save the Docker registry mirror setting."
+      "failed": "Could not load or save the Docker registry mirror settings."
     },
     "engine_info": {
       "server_version": "Server version",
@@ -333,6 +347,7 @@
       "not_found": "Application not found.",
       "abort": "Abort",
       "launch_failed": "Launch Failed",
+      "operation_error": "Application operation failed",
       "dismiss": "Dismiss",
       "running_tasks": "There are running tasks.",
       "about": "About",
@@ -410,9 +425,17 @@
       "start": "Start selected",
       "stop": "Stop selected",
       "uninstall": "Uninstall selected",
-      "uninstall_confirm": "Uninstall {{count}} selected app(s)? Their app data will be removed.",
       "start_skipped": "Could not start these apps because their runtimes are unavailable or the apps failed: {{names}}",
       "operation_failed": "These apps could not be processed: {{names}}"
+    },
+    "uninstall_dialog": {
+      "title": "Uninstall {{name}}?",
+      "message": "AiSphere will stop the app if needed and remove its installation files and app data.",
+      "batch_title": "Uninstall {{count}} apps?",
+      "batch_message": "AiSphere will stop the selected apps if needed and remove their installation files and app data.",
+      "warning": "This action cannot be undone.",
+      "cancel": "Keep app",
+      "confirm": "Uninstall"
     },
     "status": {
       "installing": "installing",
@@ -461,7 +484,15 @@
     "shutdown_ask": "Ask every time",
     "shutdown_always": "Stop automatically",
     "shutdown_never": "Leave running",
-    "shutdown_setting_failed": "Could not load or save the shutdown setting."
+    "shutdown_setting_failed": "Could not load or save the shutdown setting.",
+    "network_access": "Browser access on your local network",
+    "network_access_enabled": "Enabled on port {{port}}. Sign in from a browser using one of the addresses below and the access token.",
+    "network_access_disabled": "Disabled. To enable, set networkAccess.enabled to true in resources/config/config.json, then restart AiSphere. Configured port: {{port}}.",
+    "network_access_warning": "Anyone with this token can control AiSphere and run apps on this computer. Use only on a trusted network and keep the token private.",
+    "network_access_token": "LAN access token",
+    "network_access_copy": "Copy token",
+    "network_access_not_listening": "LAN access is enabled in the config, but the web server did not start.",
+    "network_access_failed": "Could not load LAN access status."
   },
   "home": {
     "welcome": "Welcome to AiSphere",
@@ -529,7 +560,6 @@
     "restart": "Restart",
     "delete": "Delete",
     "uninstall": "Uninstall",
-    "uninstall_confirm": "Are you sure you want to uninstall this application",
     "types": {
       "llm": "LLM",
       "tool": "Tool",
@@ -588,6 +618,7 @@
     "stop_reading": "Stop reading",
     "thinking_process": "Thinking process",
     "copy": "Copy",
+    "redo": "Redo",
     "copy_message": "Copy message",
     "copied": "Copied",
     "copy_failed": "Could not copy message",

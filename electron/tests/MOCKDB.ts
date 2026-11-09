@@ -1,4 +1,4 @@
-import { Application } from '../../src/types/api'
+import { ApplicationSpec } from '../../src/types/api'
 import { pathToFileURL } from 'url';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
@@ -35,9 +35,9 @@ const fileBrowserNasConfig = JSON.parse(
   image: string;
   hostPort: number;
   containerPort: number;
-  postInstallActions: Application['postInstallActions'];
-  postStopActions: Application['postStopActions'];
-  postUnInstallActions: Application['postUnInstallActions'];
+  postInstallActions: ApplicationSpec['postInstallActions'];
+  postStopActions: ApplicationSpec['postStopActions'];
+  postUnInstallActions: ApplicationSpec['postUnInstallActions'];
 };
 
 const appRequirements = {
@@ -48,7 +48,7 @@ const appRequirements = {
   gpu: 'Not required',
 };
 
-export const MOCK_APPLICATIONS: Application[] = [
+export const MOCK_APPLICATIONS: ApplicationSpec[] = [
   {
     id: LAN_NAS_APP_ID,
     name: 'AiSphere LAN NAS',

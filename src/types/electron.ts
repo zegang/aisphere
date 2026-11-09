@@ -1,4 +1,4 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, APP_SHUTDOWN_PROGRESS, AppInstallControlRequest, AppInstallControlResult, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, APP_SHUTDOWN_PROGRESS, AppInstallControlRequest, AppInstallControlResult, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent, RemoteAccessStatus } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
   TERMINAL_INIT, TERMINAL_LOGS, TERMINAL_INPUT, TERMINAL_RESIZE, TERMINAL_CLOSE,
@@ -10,12 +10,12 @@ import {
   EXPLORE_DETAIL, EXPLORE_INSTALL, EXPLORE_INSTALL_CONTROL, EXPLORE_LIST, EXPLORE_EXPORT, EXPLORE_IMPORT,
   ExploreExportRequest, ExploreExportResult, ExploreImportRequest, ExploreImportResult,
   SYSTEM_INFO,
+  REMOTE_ACCESS_STATUS,
   UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY,
   LAN_NAS_STATUS, LAN_NAS_START, LAN_NAS_STOP,
   LanNasStartRequest, LanNasStartResult, LanNasStatus,
 } from '@/shared/channel-types';
 import type {
-  AppCreateRequest,
   AppUpdateRequest,
   AppStartResult,
   AppStopResult,
@@ -23,7 +23,8 @@ import type {
   AppListResponse,
   SettingsListResponse,
   SettingsUpdateRequest,
-  Application,
+  ApplicationSpec,
+  InstalledApplication,
   AppDeleteResult,
   LifecycleActionRun,
   SystemInfoResponse,
@@ -32,7 +33,7 @@ import type {
 export type ElectronInvokePayloadMap = {
   [APP_LIST]: undefined;
   [APP_DETAIL]: string;
-  [APP_CREATE]: AppCreateRequest;
+  [APP_CREATE]: InstalledApplication;
   [APP_START]: string;
   [APP_STOP]: string;
   [APP_DELETE]: string;
@@ -53,12 +54,13 @@ export type ElectronInvokePayloadMap = {
 
   [EXPLORE_LIST]: undefined;
   [EXPLORE_DETAIL]: string;
-  [EXPLORE_INSTALL]: Application;
+  [EXPLORE_INSTALL]: ApplicationSpec;
   [EXPLORE_INSTALL_CONTROL]: AppInstallControlRequest;
   [EXPLORE_EXPORT]: ExploreExportRequest;
   [EXPLORE_IMPORT]: ExploreImportRequest;
 
   [SYSTEM_INFO]: undefined;
+  [REMOTE_ACCESS_STATUS]: undefined;
 
   [RUNTIME_CHECK]: undefined;
   [RUNTIME_INSTALL]: string;
@@ -106,12 +108,13 @@ export type ElectronInvokeResponseMap = {
 
   [EXPLORE_LIST]: IpcResponse<{ apps: any[] }>;
   [EXPLORE_DETAIL]: IpcResponse<{ app: any }>;
-  [EXPLORE_INSTALL]: IpcResponse<Application>;
+  [EXPLORE_INSTALL]: IpcResponse<InstalledApplication>;
   [EXPLORE_INSTALL_CONTROL]: IpcResponse<AppInstallControlResult>;
   [EXPLORE_EXPORT]: IpcResponse<ExploreExportResult>;
   [EXPLORE_IMPORT]: IpcResponse<ExploreImportResult>;
 
   [SYSTEM_INFO]: IpcResponse<SystemInfoResponse>;
+  [REMOTE_ACCESS_STATUS]: IpcResponse<RemoteAccessStatus>;
 
   [RUNTIME_CHECK]: IpcResponse<{ runtimes: { type: string; installed: boolean; managed?: boolean; version?: string }[] }>;
   [RUNTIME_INSTALL]: IpcResponse<{ lifecycleRuns?: LifecycleActionRun[] }>;

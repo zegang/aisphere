@@ -1,0 +1,939 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "title": "AiSphere Application Specification",
+  "description": "A single portable AiSphere application specification (catalog manifest). It describes what the application is, how it is installed, which runtime it uses, what it contributes to the workspace, and which lifecycle actions run around install/start/stop/uninstall. It deliberately carries no machine-local state; persisted installations are described by installed-application.schema.json.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "Optional self-reference to this schema or a compatible profile."
+    },
+    "specVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
+      "default": "1.0",
+      "description": "Version of the application-specification format, independent of the application version."
+    },
+    "id": {
+      "$ref": "#/$defs/Identifier",
+      "description": "Stable catalog identifier, for example app-006, mkt-app-009, or builtin-lan-nas."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Human-readable application name shown in Explore and Workspace."
+    },
+    "org": {
+      "type": "string",
+      "description": "Organization or publisher name. Kept for compatibility with existing AiSphere specs; prefer author for new specs."
+    },
+    "author": {
+      "$ref": "#/$defs/Author"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Application version. SemVer 2.0.0 is recommended; channel tags such as latest are also accepted by current AiSphere builds."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "Project or documentation URL."
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri-reference",
+      "description": "Optional project homepage. url is the compatibility field used by current AiSphere builds."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license expression or a short license name."
+    },
+    "icon": {
+      "$ref": "#/$defs/Icon"
+    },
+    "description": {
+      "type": "string",
+      "default": "",
+      "description": "Short summary shown on catalog cards."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Longer Markdown notes, setup hints, or post-install instructions shown to the user."
+    },
+    "category": {
+      "type": "string",
+      "default": "Other",
+      "description": "Catalog grouping label, for example LLMs Inference Engine, WebUI, MCP Server, or Skills."
+    },
+    "type": {
+      "$ref": "#/$defs/AppType"
+    },
+    "kind": {
+      "$ref": "#/$defs/AppKind"
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Search and filter labels."
+    },
+    "requirements": {
+      "$ref": "#/$defs/Requirements"
+    },
+    "runtime": {
+      "$ref": "#/$defs/Runtime"
+    },
+    "packages": {
+      "$ref": "#/$defs/Packages"
+    },
+    "installation": {
+      "$ref": "#/$defs/Installation"
+    },
+    "component": {
+      "$ref": "#/$defs/ComponentManifest"
+    },
+    "lifecycle": {
+      "$ref": "#/$defs/LifecycleHooks"
+    },
+    "postInstallActions": {
+      "$ref": "#/$defs/LifecycleActionList",
+      "deprecated": true,
+      "description": "Legacy alias for lifecycle.postInstall. Current AiSphere builds execute this after a successful app start; runtimes also use it after runtime installation."
+    },
+    "postStopActions": {
+      "$ref": "#/$defs/LifecycleActionList",
+      "deprecated": true,
+      "description": "Legacy alias for lifecycle.postStop."
+    },
+    "postUnInstallActions": {
+      "$ref": "#/$defs/LifecycleActionList",
+      "deprecated": true,
+      "description": "Legacy alias for lifecycle.postUninstall. Note the historical capital I in the field name."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional catalog-entry creation timestamp."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Optional catalog-entry update timestamp."
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Vendor or future extensions that do not map to a first-class field.",
+      "additionalProperties": true
+    }
+  },
+  "patternProperties": {
+    "^x-": {
+      "description": "Vendor extension. AiSphere preserves unknown fields; the x- prefix is recommended for third-party data."
+    }
+  },
+  "additionalProperties": true,
+  "$comment": "Unknown top-level properties are intentionally allowed. Current AiSphere import keeps unknown fields, so the schema must remain forward compatible. Use the extensions object or an x- prefix for vendor data.",
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "description": "Slug-like stable identifier, for example app-006, mkt-app-009, or builtin-lan-nas."
+    },
+    "Author": {
+      "description": "Publisher name or a structured author record.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "email": {
+              "type": "string",
+              "format": "email"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri-reference"
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "Icon": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Icon URL, data URI, or packaged resource path. Current AiSphere builds render this value directly in an img element."
+    },
+    "AppType": {
+      "type": "string",
+      "enum": [
+        "llm",
+        "tool",
+        "agent",
+        "dataset",
+        "other"
+      ],
+      "default": "other",
+      "description": "Broad catalog type used by the Explore filters."
+    },
+    "AppKind": {
+      "type": "string",
+      "enum": [
+        "engine",
+        "webui",
+        "agent",
+        "skill",
+        "hook",
+        "tool",
+        "instructions",
+        "mcp",
+        "app"
+      ],
+      "default": "app",
+      "description": "Workspace capability provided by this entry. Only the matching component section is consumed."
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "linux",
+        "mac",
+        "any"
+      ],
+      "default": "any"
+    },
+    "Requirements": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "$ref": "#/$defs/Platform"
+        },
+        "cpu": {
+          "type": "string",
+          "description": "Human-readable CPU requirement, for example x64 or Any."
+        },
+        "memory": {
+          "type": "string",
+          "description": "Human-readable memory requirement, for example 8GB RAM."
+        },
+        "storage": {
+          "type": "string",
+          "description": "Human-readable storage requirement, for example 10GB."
+        },
+        "gpu": {
+          "type": "string",
+          "description": "Human-readable GPU requirement, for example NVIDIA RTX 3060 or Not required."
+        },
+        "arch": {
+          "type": "string",
+          "enum": [
+            "x64",
+            "arm64",
+            "any"
+          ],
+          "description": "Optional machine architecture constraint for future use."
+        }
+      },
+      "required": [
+        "platform",
+        "cpu",
+        "memory",
+        "storage",
+        "gpu"
+      ],
+      "additionalProperties": true
+    },
+    "Runtime": {
+      "type": "object",
+      "description": "Runtime that executes the application. Docker/Podman/Apptainer use an image or a downloaded artifact; Conda uses package args; native runs directly on the host.",
+      "required": [
+        "runtime"
+      ],
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "enum": [
+            "apptainer",
+            "docker",
+            "podman",
+            "conda",
+            "native"
+          ]
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Container image reference, for example ghcr.io/org/image:tag."
+        },
+        "install": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Conda install arguments. Current AiSphere builds keep this for Conda runtimes."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Runtime options passed before the image or command, for example -p 8091:8080."
+        },
+        "startscript": {
+          "type": "string",
+          "description": "Optional start script or entrypoint. Apptainer prepends it to args."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments passed to the application. Current AiSphere builds expand {apphome} and {model} tokens for Docker/Podman."
+        }
+      },
+      "additionalProperties": true,
+      "$comment": "Conditional requirements are intentionally not enforced: existing catalog entries use artifact-based Podman/Apptainer installs without an image, and Docker entries without packages."
+    },
+    "Packages": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Download artifacts such as model files, archives, installers, or file:// URLs. Downloads land in the application home directory."
+    },
+    "Environment": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      },
+      "description": "Environment variables as string, number, or boolean values."
+    },
+    "InstallScript": {
+      "type": "object",
+      "description": "Optional declarative install-script descriptor. Current AiSphere builds auto-detect install.ps1/install.bat on Windows and install.sh on Linux/macOS in the application home directory.",
+      "required": [
+        "file"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Script file name or relative path, for example install.ps1."
+        },
+        "interpreter": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "powershell",
+            "cmd",
+            "bash",
+            "sh",
+            "custom"
+          ],
+          "default": "auto"
+        },
+        "command": {
+          "type": "string",
+          "description": "Custom interpreter or command when interpreter is custom."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workingDirectory": {
+          "type": "string",
+          "description": "Working directory relative to the application home directory."
+        },
+        "environment": {
+          "$ref": "#/$defs/Environment"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "elevated": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reserved for future privileged installers. Current AiSphere install scripts run without elevation."
+        }
+      },
+      "additionalProperties": true
+    },
+    "Installation": {
+      "type": "object",
+      "description": "Optional normalized installation plan. Current AiSphere installs from packages and runtime; this object documents the strategy and reserves script options for future builds. If omitted, the strategy is derived from runtime.runtime and packages.",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "packages",
+            "container",
+            "script",
+            "native",
+            "conda"
+          ],
+          "default": "auto",
+          "description": "auto keeps current behavior. packages downloads artifacts. container pulls/loads an image. script runs an install script. conda provisions a Conda environment. native uses no installer."
+        },
+        "packages": {
+          "$ref": "#/$defs/Packages"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script": {
+          "$ref": "#/$defs/InstallScript"
+        },
+        "workingDirectory": {
+          "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/Environment"
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "container"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "image"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "script"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "script"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "packages"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "packages"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "ComponentManifest": {
+      "type": "object",
+      "description": "Declarative manifest registered in the workspace after installation. Only the section matching kind is consumed.",
+      "properties": {
+        "server": {
+          "$ref": "#/$defs/McpServer"
+        },
+        "skill": {
+          "$ref": "#/$defs/Skill"
+        },
+        "agent": {
+          "$ref": "#/$defs/Agent"
+        },
+        "hooks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkspaceHook"
+          },
+          "description": "Workspace event hooks, not application install/start lifecycle actions."
+        },
+        "instructions": {
+          "$ref": "#/$defs/InstructionPack"
+        }
+      },
+      "additionalProperties": true
+    },
+    "McpServer": {
+      "type": "object",
+      "required": [
+        "transport"
+      ],
+      "properties": {
+        "transport": {
+          "type": "string",
+          "enum": [
+            "stdio",
+            "http",
+            "sse",
+            "local"
+          ]
+        },
+        "command": {
+          "type": "string",
+          "description": "Executable for stdio servers."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "env": {
+          "$ref": "#/$defs/Environment"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri-reference",
+          "description": "Endpoint for http or sse servers."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Optional HTTP headers for http or sse servers."
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolDefinition"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "transport": {
+                "enum": [
+                  "http",
+                  "sse"
+                ]
+              }
+            },
+            "required": [
+              "transport"
+            ]
+          },
+          "then": {
+            "required": [
+              "url"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "transport": {
+                "const": "stdio"
+              }
+            },
+            "required": [
+              "transport"
+            ]
+          },
+          "then": {
+            "required": [
+              "command"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    "ToolDefinition": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "inputSchema": {
+          "type": "object",
+          "description": "Optional JSON Schema describing the tool input."
+        }
+      },
+      "additionalProperties": true
+    },
+    "Skill": {
+      "type": "object",
+      "required": [
+        "instructions"
+      ],
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "Agent": {
+      "type": "object",
+      "properties": {
+        "emoji": {
+          "type": "string"
+        },
+        "instructions": {
+          "type": "string"
+        },
+        "skillIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "toolIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "WorkspaceHook": {
+      "type": "object",
+      "required": [
+        "event",
+        "name"
+      ],
+      "properties": {
+        "event": {
+          "type": "string",
+          "enum": [
+            "session-start",
+            "message-send",
+            "assistant-reply",
+            "tool-call"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "InstructionPack": {
+      "type": "object",
+      "required": [
+        "content"
+      ],
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "LifecycleActionList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LifecycleAction"
+      },
+      "uniqueItems": true,
+      "default": [],
+      "description": "Ordered lifecycle actions. Action ids should be unique within the list."
+    },
+    "ActionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "ActionBase": {
+      "type": "object",
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ActionId"
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "continueOnError": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reserved for future builds. Current AiSphere records a failed action and continues with the remaining actions."
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Reserved for future builds. Current AiSphere uses per-action internal timeouts."
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "windows",
+              "linux",
+              "macos"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Optional platform filter. Actions are skipped on other platforms."
+        }
+      },
+      "additionalProperties": true
+    },
+    "DockerLogCredentialsAction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ActionBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "const": "docker-log-credentials"
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Case-insensitive regular expressions matched against recent Docker logs."
+        },
+        "tailLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "default": 200,
+          "description": "Number of recent log lines to inspect. Current AiSphere clamps this to 1..2000."
+        }
+      },
+      "required": [
+        "patterns"
+      ],
+      "additionalProperties": true
+    },
+    "WindowsFirewallAction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ActionBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "const": "windows-firewall"
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "ensure",
+            "remove"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "ruleName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "profile": {
+          "const": "private",
+          "description": "Current AiSphere only allows rules on the Private profile."
+        },
+        "remoteAddress": {
+          "const": "localsubnet",
+          "description": "Current AiSphere only allows the local subnet as the remote address."
+        }
+      },
+      "required": [
+        "operation",
+        "port",
+        "ruleName",
+        "profile",
+        "remoteAddress"
+      ],
+      "additionalProperties": true
+    },
+    "CustomLifecycleAction": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ActionBase"
+        }
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "not": {
+            "enum": [
+              "docker-log-credentials",
+              "windows-firewall"
+            ]
+          }
+        }
+      },
+      "description": "Forward-compatible extension point for new action types. Unknown types validate structurally but may be skipped or rejected by the running AiSphere build.",
+      "additionalProperties": true
+    },
+    "LifecycleAction": {
+      "description": "One lifecycle action. Known action types validate strictly; unknown types are allowed for forward compatibility.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DockerLogCredentialsAction"
+        },
+        {
+          "$ref": "#/$defs/WindowsFirewallAction"
+        },
+        {
+          "$ref": "#/$defs/CustomLifecycleAction"
+        }
+      ]
+    },
+    "LifecycleHooks": {
+      "type": "object",
+      "description": "Application lifecycle hooks. Intended order: preInstall, install, postInstall; preStart, starting, postStart; preStop, stopping, postStop; preUninstall, uninstalling, postUninstall. Update and restart phases are reserved for future builds. Current builds execute the legacy top-level post*Actions aliases; the other phases are declared here so specs are ready for future runtime support.",
+      "properties": {
+        "preInstall": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "install": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "postInstall": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "preStart": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "starting": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "postStart": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "preStop": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "stopping": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "postStop": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "preUninstall": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "uninstalling": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "postUninstall": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "preUpdate": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "update": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "postUpdate": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "preRestart": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "restarting": {
+          "$ref": "#/$defs/LifecycleActionList"
+        },
+        "postRestart": {
+          "$ref": "#/$defs/LifecycleActionList"
+        }
+      },
+      "patternProperties": {
+        "^[a-z][A-Za-z0-9]*$": {
+          "$ref": "#/$defs/LifecycleActionList"
+        }
+      },
+      "additionalProperties": false,
+      "$comment": "Additional camelCase phases are accepted so future builds can add phases without breaking older schemas. Non-camelCase keys are rejected."
+    }
+  }
+}

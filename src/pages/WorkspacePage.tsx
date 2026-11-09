@@ -13,6 +13,7 @@ import {
   VolumeX,
   Copy,
   RefreshCw,
+  RotateCcw,
   Check,
   Cpu,
   Bot,
@@ -28,9 +29,10 @@ import { useTranslation } from '@/i18n';
 import { useAppStore } from '@/stores/appStore';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import type { ChatMessage } from '@/stores/workspaceStore';
 import { splitToolKey } from '@/types/workspace';
 import { ENGINE_CHAT, ENGINE_CHAT_STREAM, type EngineChatMessage, type EngineChatStreamEvent } from '@/shared/channel-types';
-import type { Application } from '@/types/api';
+import type { InstalledApplication } from '@/types/api';
 import AgentsPanel from '@/components/workspace/AgentsPanel';
 import SkillsPanel from '@/components/workspace/SkillsPanel';
 import McpPanel from '@/components/workspace/McpPanel';
@@ -57,7 +59,7 @@ interface Source {
  * older/legacy entries (e.g. llama.cpp and the bundled GGUF engines) have no
  * `kind` and are identified by their LLM category instead.
  */
-function isEngineApp(app: Application): boolean {
+function isEngineApp(app: InstalledApplication): boolean {
   return app.kind === 'engine'
     || (!app.kind && app.type === 'llm' && app.category === 'LLMs Inference Engine');
 }
@@ -69,7 +71,7 @@ interface EngineGroup {
   models: LocalModel[];
 }
 
-function detectEngines(applications: Application[]): EngineGroup[] {
+function detectEngines(applications: InstalledApplication[]): EngineGroup[] {
   const groups: EngineGroup[] = [];
 
   for (const app of applications) {
@@ -136,6 +138,9 @@ export default function WorkspacePage() {
     ?? workspaces[0]
     ?? null;
   const messages = activeWorkspace?.messages ?? [];
+  // Only the newest answer offers "redo", matching mainstream chat UIs.
+  const lastAssistantId = [...messages].reverse()
+    .find((message) => message.role === 'assistant' && message.id !== 'welcome')?.id ?? null;
   const selectedAgentId = activeWorkspace?.agentId ?? null;
 
   const [sources] = useState<Source[]>([
@@ -322,47 +327,14 @@ export default function WorkspacePage() {
     chatEndRef.current?.scrollIntoView({ behavior: streaming ? 'auto' : 'smooth' });
   }, [messages]);
 
-  const handleSend = async () => {
-    if (!input.trim() || !activeWorkspace) return;
-
-    // Engine must be running before a chat can be dispatched (the model lives
-    // inside its inference engine process). A stopped engine opens the same
-    // start flow the picker uses, so the user is never left with a silent
-    // dead-end send.
-    if (selectedEngine && selectedEngine.status !== 'running') {
-      const modelId = selectedModel?.id ?? selectedEngine.models[0]?.id;
-      if (modelId) {
-        selectModelWithEngineCheck(modelId, selectedEngine);
-        return;
-      }
-    }
-
-    const text = input.trim();
-    const workspaceId = activeWorkspace.id;
-    const engineAppId = selectedEngine?.appId ?? selectedModel?.id.split(':')[0] ?? null;
-
-    useWorkspaceStore.getState().appendMessage(workspaceId, {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: text,
-    });
-    setInput('');
-    setIsThinking(true);
-
-    if (!engineAppId) {
-      useWorkspaceStore.getState().appendMessage(workspaceId, {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: t('workspace.chat_no_engine'),
-      });
-      setIsThinking(false);
-      return;
-    }
-
-    // The active agent, workspace skills/instruction packs and attached tools
-    // shape the system prompt. Workspace attachments are additive: an agent can
-    // still ship its own bundled skills/tools while the user opts extra
-    // components into this workspace.
+  /**
+   * System prompt shared by new messages and regenerated replies: the bound
+   * agent, enabled instruction packs, workspace skills and attached tools.
+   * Workspace attachments are additive: an agent can still ship its own
+   * bundled skills/tools while the user opts extra components into this
+   * workspace.
+   */
+  const buildSystemParts = () => {
     const agentSkillIds = selectedAgent?.skillIds ?? [];
     const effectiveSkillIds = [...new Set([...attachedSkillIds, ...agentSkillIds])];
     const activeSkillDefs = skills.filter((skill) => effectiveSkillIds.includes(skill.id) && skill.enabled);
@@ -378,7 +350,7 @@ export default function WorkspacePage() {
       return servers.find((s) => s.id === serverId)?.tools.find((tool) => tool.id === toolId)?.name ?? toolId;
     });
 
-    const systemParts = [
+    return [
       'You are AiSphere, a helpful local AI assistant. Answer clearly and concisely.',
       selectedAgent?.instructions ?? '',
       ...enabledInstructions.map((pack) => `# ${pack.name}\n${pack.content}`),
@@ -387,32 +359,27 @@ export default function WorkspacePage() {
         ? `Workspace tools available to the user: ${activeToolNames.join(', ')}. Mention them when relevant; do not claim to run them yourself.`
         : '',
     ].map((part) => part.trim()).filter(Boolean);
+  };
 
-    const history: EngineChatMessage[] = (
-      useWorkspaceStore.getState().workspaces.find((workspace) => workspace.id === workspaceId)?.messages ?? []
-    )
-      .filter((message) => message.content.trim().length > 0)
-      .slice(-24)
-      .map((message) => ({ role: message.role, content: message.content }));
+  /** Recent conversation turns, capped like the engine request did before. */
+  const toEngineHistory = (history: ChatMessage[]): EngineChatMessage[] => history
+    .filter((message) => message.id !== 'welcome' && message.content.trim().length > 0)
+    .slice(-24)
+    .map((message) => ({ role: message.role, content: message.content }));
 
-    const engineMessages: EngineChatMessage[] = [
-      ...(systemParts.length ? [{ role: 'system' as const, content: systemParts.join('\n\n') }] : []),
-      ...history,
-    ];
-
-    // Streaming: insert an assistant placeholder, then patch it in place as
-    // tokens arrive from the main process. Updates are batched so a fast local
-    // model does not trigger one store write (and localStorage persist) per
-    // token.
+  /**
+   * Streams one reply into an already-created assistant placeholder. Send and
+   * Regenerate share this path so streaming, error handling and reasoning
+   * rendering stay identical. Updates are batched so a fast local model does
+   * not trigger one store write (and localStorage persist) per token.
+   */
+  const streamAssistantReply = async (
+    workspaceId: string,
+    engineAppId: string,
+    engineMessages: EngineChatMessage[],
+    assistantId: string,
+  ) => {
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const assistantId = `assistant-${Date.now()}`;
-    useWorkspaceStore.getState().appendMessage(workspaceId, {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      reasoning: '',
-      streaming: true,
-    });
 
     let streamed = '';
     let thought = '';
@@ -479,6 +446,101 @@ export default function WorkspacePage() {
     }
   };
 
+  const handleSend = async () => {
+    if (!input.trim() || !activeWorkspace) return;
+
+    // Engine must be running before a chat can be dispatched (the model lives
+    // inside its inference engine process). A stopped engine opens the same
+    // start flow the picker uses, so the user is never left with a silent
+    // dead-end send.
+    if (selectedEngine && selectedEngine.status !== 'running') {
+      const modelId = selectedModel?.id ?? selectedEngine.models[0]?.id;
+      if (modelId) {
+        selectModelWithEngineCheck(modelId, selectedEngine);
+        return;
+      }
+    }
+
+    const text = input.trim();
+    const workspaceId = activeWorkspace.id;
+    const engineAppId = selectedEngine?.appId ?? selectedModel?.id.split(':')[0] ?? null;
+
+    useWorkspaceStore.getState().appendMessage(workspaceId, {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text,
+    });
+    setInput('');
+    setIsThinking(true);
+
+    if (!engineAppId) {
+      useWorkspaceStore.getState().appendMessage(workspaceId, {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: t('workspace.chat_no_engine'),
+      });
+      setIsThinking(false);
+      return;
+    }
+
+    const systemParts = buildSystemParts();
+    const history = useWorkspaceStore.getState().workspaces
+      .find((workspace) => workspace.id === workspaceId)?.messages ?? [];
+    const engineMessages: EngineChatMessage[] = [
+      ...(systemParts.length ? [{ role: 'system' as const, content: systemParts.join('\n\n') }] : []),
+      ...toEngineHistory(history),
+    ];
+
+    const assistantId = `assistant-${Date.now()}`;
+    useWorkspaceStore.getState().appendMessage(workspaceId, {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      streaming: true,
+    });
+
+    await streamAssistantReply(workspaceId, engineAppId, engineMessages, assistantId);
+  };
+
+  /**
+   * Regenerates the newest assistant reply in place (the "redo" action on a
+   * chat answer). The history sent to the model stops at the user prompt that
+   * produced the reply, and the previous answer is replaced by the new stream.
+   */
+  const regenerateMessage = async (messageId: string) => {
+    if (!activeWorkspace || isThinking) return;
+    const workspaceId = activeWorkspace.id;
+    const index = messages.findIndex((message) => message.id === messageId);
+    if (index < 0 || messages[index].role !== 'assistant') return;
+    if (messages.some((message) => message.streaming)) return;
+    const hasUserPrompt = messages.slice(0, index).some((message) => message.role === 'user');
+    if (!hasUserPrompt) return;
+
+    if (selectedEngine && selectedEngine.status !== 'running') {
+      const modelId = selectedModel?.id ?? selectedEngine.models[0]?.id;
+      if (modelId) selectModelWithEngineCheck(modelId, selectedEngine);
+      return;
+    }
+    const engineAppId = selectedEngine?.appId ?? selectedModel?.id.split(':')[0] ?? null;
+    if (!engineAppId) return;
+
+    const systemParts = buildSystemParts();
+    const engineMessages: EngineChatMessage[] = [
+      ...(systemParts.length ? [{ role: 'system' as const, content: systemParts.join('\n\n') }] : []),
+      ...toEngineHistory(messages.slice(0, index)),
+    ];
+
+    setIsThinking(true);
+    useWorkspaceStore.getState().updateMessage(workspaceId, messageId, {
+      content: '',
+      reasoning: '',
+      streaming: true,
+    });
+
+    await streamAssistantReply(workspaceId, engineAppId, engineMessages, messageId);
+  };
+
   const copyMessage = async (messageId: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -542,6 +604,11 @@ export default function WorkspacePage() {
     { key: 'mcp', icon: Wrench, label: 'workspace.tab_mcp' },
     { key: 'studio', icon: Edit3Icon, label: 'workspace.tab_studio' },
   ];
+
+  // Icon-only message actions stay visible under every finished message (like
+  // Gemini/ChatGPT); the label is exposed through the native tooltip and for
+  // screen readers via aria-label.
+  const messageActionClass = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-light-muted transition-colors hover:bg-light-muted hover:text-light-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-not-allowed disabled:opacity-40 dark:text-dark-muted dark:hover:bg-dark-muted dark:hover:text-dark-text';
 
   return (
     <div className="flex h-full bg-light-bg dark:bg-dark-bg text-light-text dark:text-dark-text overflow-hidden">
@@ -921,32 +988,42 @@ export default function WorkspacePage() {
                   </span>
                 </div>
                 {messageContent.trim() && !streaming && (
-                  <div className={`mt-1 flex items-center gap-1 rounded-lg border border-light-border/70 bg-light-surface/90 p-0.5 opacity-100 shadow-sm transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 dark:border-dark-border/70 dark:bg-dark-surface/90 ${
+                  <div className={`mt-1 flex items-center gap-0.5 ${
                     msg.role === 'user' ? 'self-end' : 'self-start'
                   }`}>
+                    {msg.role === 'assistant' && msg.id === lastAssistantId && (
+                      <button
+                        type="button"
+                        onClick={() => regenerateMessage(msg.id)}
+                        disabled={isThinking}
+                        aria-label={t('workspace.redo')}
+                        title={t('workspace.redo')}
+                        className={messageActionClass}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => copyMessage(msg.id, messageContent)}
                       aria-label={t(feedback === 'copied' ? 'workspace.copied' : 'workspace.copy_message')}
                       title={t(feedback === 'copied' ? 'workspace.copied' : 'workspace.copy_message')}
-                      className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-light-subtle transition-colors hover:bg-light-muted hover:text-light-text dark:text-dark-subtle dark:hover:bg-dark-muted dark:hover:text-dark-text"
+                      className={messageActionClass}
                     >
-                      {feedback === 'copied' ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
-                      {feedback === 'copied' ? t('workspace.copied') : t('workspace.copy')}
+                      {feedback === 'copied'
+                        ? <Check className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+                        : <Copy className="h-3.5 w-3.5" />}
                     </button>
                     <button
                       type="button"
                       onClick={() => toggleReadAloud(msg.id, messageContent)}
                       aria-label={t(speakingMessageId === msg.id ? 'workspace.stop_reading' : 'workspace.read_aloud')}
                       title={t(speakingMessageId === msg.id ? 'workspace.stop_reading' : 'workspace.read_aloud')}
-                      className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] transition-colors hover:bg-light-muted dark:hover:bg-dark-muted ${
-                        speakingMessageId === msg.id
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-light-subtle hover:text-light-text dark:text-dark-subtle dark:hover:text-dark-text'
+                      className={`${messageActionClass} ${
+                        speakingMessageId === msg.id ? 'text-blue-600 dark:text-blue-400' : ''
                       }`}
                     >
                       {speakingMessageId === msg.id ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-                      {t(speakingMessageId === msg.id ? 'workspace.stop_reading' : 'workspace.read_aloud')}
                     </button>
                     {(feedback === 'copy-failed' || feedback === 'read-failed') && (
                       <span role="status" className="px-1 text-[10px] text-red-600 dark:text-red-400">

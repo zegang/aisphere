@@ -1,4 +1,4 @@
-import { Application } from '../../src/types/api';
+import { InstalledApplication } from '../../src/types/api';
 import { LogService } from '../services/LogService';
 import { ServiceContainer } from '..//services/ServiceContainer';
 import { spawn } from 'child_process';
@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { AppInstallControl } from './app-install-control';
 import { AppService } from '../services/AppService';
+import { Downloader } from './downloader';
 import { getDataPath } from './app-paths';
 
 export enum RuntimeClass {
@@ -28,7 +29,7 @@ export interface Task {
   options?: string[],
   startscript?: string,
   args?: string[],
-  app: Application,
+  app: InstalledApplication,
   hostPorts?: Record<string, string>,
 }
 
@@ -55,7 +56,7 @@ export abstract class Runtime {
   }
 
   /** Performs application-specific installation logic within the runtime */
-  abstract install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>>;
+  abstract install(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>>;
 
   /** Starts the application */
   abstract run(task: Task): Promise<Task>;
@@ -85,7 +86,7 @@ export abstract class Runtime {
   abstract status(task: Task): Promise<'running' | 'stopped' | 'paused' | 'unknown'>;
 
   /** Inspects the application file and returns metadata */
-  abstract inspect(app: Application): Promise<Record<string, any>>;
+  abstract inspect(app: InstalledApplication): Promise<Record<string, any>>;
 }
 
 /**
@@ -99,7 +100,7 @@ export class RuntimeApptainer extends Runtime {
     return this.getRuntimeClass();
   }
 
-  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async install(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     throw new Error('Method not implemented.');
   }
 
@@ -233,7 +234,7 @@ export class RuntimeApptainer extends Runtime {
     }
   }
 
-  async inspect(appData: Application): Promise<Record<string, any>> {
+  async inspect(appData: InstalledApplication): Promise<Record<string, any>> {
     this.getLogger().info(`Inspecting Apptainer image for ${appData.name}`, 'RuntimeApptainer');
     if (!appData.install?.installed_package) {
       return {};
@@ -264,7 +265,7 @@ export class RuntimePodman extends Runtime {
     return this.getRuntimeClass();
   }
 
-  async importImage(app: Application) {
+  async importImage(app: InstalledApplication) {
     if (!app.install || !app.install.installed_package) {
       throw new Error(`Missing installed package for application ${app.name}`)
     }
@@ -293,7 +294,7 @@ export class RuntimePodman extends Runtime {
     }
   }
 
-  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async install(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     throw new Error('Method not implemented.');
   }
 
@@ -474,7 +475,7 @@ export class RuntimePodman extends Runtime {
     }
   }
 
-  async inspect(appData: Application): Promise<Record<string, any>> {
+  async inspect(appData: InstalledApplication): Promise<Record<string, any>> {
     this.getLogger().info(`Inspecting Podman image for ${appData.name}`, 'RuntimePodman');
 
     const packagePath = appData.install?.installed_package;
@@ -576,13 +577,19 @@ export class RuntimeDocker extends Runtime {
   }
 
   private async pullImage(image: string, cwd?: string, onLog?: (message: string) => void, control?: AppInstallControl): Promise<void> {
-    const runtimeService = ServiceContainer.getInstance().get<{ getDockerRegistryMirror(): Promise<string | undefined> }>(ServiceName.RuntimeService);
-    const mirror = await runtimeService.getDockerRegistryMirror();
-    const mirrorImage = mirror ? getDockerHubMirrorImageReference(image, mirror) : undefined;
+    const runtimeService = ServiceContainer.getInstance().get<{
+      getDockerRegistryMirrors(): Promise<Array<{ url: string; enabled: boolean }>>;
+    }>(ServiceName.RuntimeService);
+    const mirrors = (await runtimeService.getDockerRegistryMirrors()).filter((mirror) => mirror.enabled);
 
-    if (mirrorImage) {
+    const failures: string[] = [];
+    for (const mirror of mirrors) {
+      const mirrorImage = getDockerHubMirrorImageReference(image, mirror.url);
+      if (!mirrorImage) continue;
+
+      const host = new URL(mirror.url).host;
       try {
-        onLog?.(`Pulling Docker Hub image through ${new URL(mirror!).host}...\r\n`);
+        onLog?.(`Pulling Docker Hub image through ${host}...\r\n`);
         await this.pullImageReference(mirrorImage, cwd, onLog, control);
         await control?.waitUntilResumed();
         await this.getSanboxService().runCommand(
@@ -593,22 +600,26 @@ export class RuntimeDocker extends Runtime {
         return;
       } catch (error) {
         control?.throwIfAborted();
-        const mirrorError = error instanceof Error ? error.message : String(error);
-        onLog?.(`The selected mirror could not provide this image; retrying directly from Docker Hub.\r\n`);
-        try {
-          await this.pullImageReference(image, cwd, onLog, control);
-          return;
-        } catch (directError) {
-          control?.throwIfAborted();
-          const directMessage = directError instanceof Error ? directError.message : String(directError);
-          throw new Error(
-            `Docker image pull failed through the selected mirror (${mirrorError}) and directly from Docker Hub (${directMessage}).`,
-          );
-        }
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`${host}: ${message}`);
+        onLog?.(`${host} could not provide this image; trying the next source.\r\n`);
       }
     }
 
-    await this.pullImageReference(image, cwd, onLog, control);
+    if (failures.length > 0) {
+      onLog?.('No configured mirror could provide this image; pulling directly from Docker Hub.\r\n');
+    }
+
+    try {
+      await this.pullImageReference(image, cwd, onLog, control);
+    } catch (directError) {
+      control?.throwIfAborted();
+      if (failures.length === 0) throw directError;
+      const directMessage = directError instanceof Error ? directError.message : String(directError);
+      throw new Error(
+        `Docker image pull failed through every configured mirror (${failures.join('; ')}) and directly from Docker Hub (${directMessage}).`,
+      );
+    }
   }
 
   private async pullImageReference(image: string, cwd?: string, onLog?: (message: string) => void, control?: AppInstallControl): Promise<void> {
@@ -659,7 +670,7 @@ export class RuntimeDocker extends Runtime {
     }
   }
 
-  async install(app: Application, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
+  async install(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const image = app.runtime?.image;
     if (!image) {
       throw new Error(`Application ${app.name} does not define a Docker image.`);
@@ -686,7 +697,7 @@ export class RuntimeDocker extends Runtime {
       installed_at: app.install?.installed_at || new Date().toISOString(),
       installed_package: app.install?.installed_package || image,
       installed_image: image,
-    } as Application['install'];
+    } as InstalledApplication['install'];
 
     emit(`Docker image ready: ${image}`);
     return { success: true, data: app };
@@ -733,17 +744,66 @@ export class RuntimeDocker extends Runtime {
     return { options, args };
   }
 
+  /**
+   * Model files live in the app home directory. If the file recorded during
+   * installation is gone (for example because the folder was cleaned up), the
+   * container would start and then fail to load the model. Download it again
+   * before touching Docker so a start repairs the app instead of failing with
+   * an unrelated error.
+   */
+  private async ensureModelPackageAvailable(app: InstalledApplication, appHome: string): Promise<void> {
+    const installedPackage = app.install?.installed_package;
+    if (
+      !installedPackage ||
+      !/\.(gguf|safetensors|bin|onnx|pt|pth)$/i.test(installedPackage) ||
+      existsSync(installedPackage)
+    ) {
+      return;
+    }
+
+    if (!app.packages || app.packages.length === 0) {
+      throw new Error(
+        `The model file for ${app.name} is missing and no download source is recorded. Reinstall the app from Explore.`,
+      );
+    }
+
+    const target = basename(installedPackage);
+    const source = app.packages.find((url) => {
+      try {
+        return decodeURIComponent(basename(new URL(url).pathname)) === target;
+      } catch {
+        return false;
+      }
+    }) ?? app.packages[0];
+
+    this.getLogger().warn(`Model file missing for ${app.name}; downloading ${source} again.`, 'RuntimeDocker');
+    const result = await new Downloader(this.getLogger()).download(source, appHome);
+    if (!result.success || !result.filePath) {
+      throw new Error(
+        `Could not restore the model file for ${app.name}: ${result.error ?? 'download failed'}`,
+      );
+    }
+
+    app.install = {
+      ...(app.install ?? { installed: true, installed_at: new Date().toISOString() }),
+      installed_package: result.filePath,
+    };
+    await this.getAppService().updateApp(app.id, app);
+  }
+
   async run(task: Task): Promise<Task> {
     const app = task.app;
     try {
       this.getLogger().info(`Starting Docker container for Application ${app.name}`, 'RuntimeDocker');
+      const appHome = this.getAppService().getAppHomeDir(app);
+      await this.ensureModelPackageAvailable(app, appHome);
       await this.ensureAvailable();
 
       const image = app.install?.installed_image || app.runtime?.image;
       if (!image) {
         throw new Error('No Docker image recorded for this application. Reinstall it from Explore.');
       }
-      await this.ensureImageAvailable(image, app.apphomedir);
+      await this.ensureImageAvailable(image, appHome);
 
       const { options, args } = this.buildRunArgs(task);
 
@@ -751,7 +811,7 @@ export class RuntimeDocker extends Runtime {
       // `docker run --name` fail, so remove it first.
       try {
         await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['rm', '-f', task.id], {
-          cwd: app.apphomedir,
+          cwd: appHome,
           onLog: () => { /* expected to fail when the container does not exist */ }
         });
       } catch {
@@ -761,7 +821,7 @@ export class RuntimeDocker extends Runtime {
       await this.getSanboxService().runCommand(this.getRuntimeBinPath(),
         ['run', '-d', '--name', task.id, ...options, image, ...args],
         {
-          cwd: app.apphomedir,
+          cwd: appHome,
           onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker'),
           includeErrorOutput: true,
         }
@@ -784,7 +844,7 @@ export class RuntimeDocker extends Runtime {
   async restart(task: Task): Promise<Task> {
     this.getLogger().info(`Restarting Docker container ${task.id}`, 'RuntimeDocker');
     await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['restart', task.id], {
-      cwd: task.app.apphomedir || process.cwd(),
+      cwd: this.getAppService().getAppHomeDir(task.app),
       onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
     });
     task.status = 'running';
@@ -795,7 +855,7 @@ export class RuntimeDocker extends Runtime {
   async pause(task: Task): Promise<void> {
     this.getLogger().info(`Pausing Docker container ${task.id}`, 'RuntimeDocker');
     await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['pause', task.id], {
-      cwd: task.app.apphomedir || process.cwd(),
+      cwd: this.getAppService().getAppHomeDir(task.app),
       onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
     });
     task.status = 'paused';
@@ -805,7 +865,7 @@ export class RuntimeDocker extends Runtime {
     this.getLogger().info(`Stopping Docker container ${task.id}`, 'RuntimeDocker');
     try {
       await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['stop', task.id], {
-        cwd: task.app.apphomedir || process.cwd(),
+        cwd: this.getAppService().getAppHomeDir(task.app),
         onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
       });
     } catch (e: any) {
@@ -814,7 +874,7 @@ export class RuntimeDocker extends Runtime {
 
     this.getLogger().info(`Removing Docker container ${task.id}`, 'RuntimeDocker');
     await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['rm', '-f', task.id], {
-      cwd: task.app.apphomedir || process.cwd(),
+      cwd: this.getAppService().getAppHomeDir(task.app),
       onLog: (msg) => this.getLogger().debug(msg, 'RuntimeDocker')
     });
   }
@@ -889,7 +949,7 @@ export class RuntimeDocker extends Runtime {
       // interpret as a pipe instead of passing it to Docker.
       await this.getSanboxService().runCommand(this.getRuntimeBinPath(),
         ['inspect', task.id], {
-        cwd: task.app.apphomedir || process.cwd(),
+        cwd: this.getAppService().getAppHomeDir(task.app),
         onLog: (data) => { output += data; }
       });
 
@@ -925,7 +985,7 @@ export class RuntimeDocker extends Runtime {
     }
   }
 
-  async inspect(appData: Application): Promise<Record<string, any>> {
+  async inspect(appData: InstalledApplication): Promise<Record<string, any>> {
     const image = appData.install?.installed_image || appData.runtime?.image;
     if (!image) return {};
 
@@ -933,7 +993,7 @@ export class RuntimeDocker extends Runtime {
     let output = '';
     try {
       await this.getSanboxService().runCommand(this.getRuntimeBinPath(), ['image', 'inspect', image], {
-        cwd: appData.apphomedir || process.cwd(),
+        cwd: this.getAppService().getAppHomeDir(appData),
         onLog: (msg) => { output += msg; }
       });
       const jsonStart = output.indexOf('[');
@@ -959,7 +1019,7 @@ export class RuntimeConda extends Runtime {
     return 'conda';
   }
 
-  ensureCondEnvExisted(app: Application) {
+  ensureCondEnvExisted(app: InstalledApplication) {
     const envName = app.id;
     this.getLogger().info(`Creating Conda environment ${envName}`, 'RuntimeConda');
     this.getSanboxService().runCommand(this.getRuntimeBinPath(),
@@ -973,7 +1033,7 @@ export class RuntimeConda extends Runtime {
     );
   }
 
-  async install(app: Application, event?: any): Promise<IpcResponse<any>> {
+  async install(app: InstalledApplication, event?: any): Promise<IpcResponse<any>> {
     this.getLogger().info(`Creating Conda environment for ${app.name}`, 'RuntimeConda');
     const envName = app.id;
     this.getLogger().info(`Creating Conda environment ${envName}`, 'RuntimeConda');
@@ -1087,7 +1147,7 @@ export class RuntimeConda extends Runtime {
     }
   }
 
-  async inspect(appData: Application): Promise<Record<string, any>> {
+  async inspect(appData: InstalledApplication): Promise<Record<string, any>> {
     return { runtime: 'conda' };
   }
 }

@@ -9,6 +9,10 @@ import {
   Play,
   Square,
   Terminal as TerminalIcon,
+  ChevronUp,
+  ChevronDown,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   RUNTIME_DETAIL,
@@ -23,7 +27,7 @@ import {
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { useLifecycleHistoryStore } from '@/stores/lifecycleHistoryStore';
 import { SettingKey } from '@/stores/settingStore';
-import { DOCKER_REGISTRY_MIRRORS } from '@/shared/types';
+import { DOCKER_REGISTRY_MIRRORS, normalizeDockerRegistryMirrorUrl, parseDockerRegistryMirrors, type DockerRegistryMirrorConfig } from '@/shared/types';
 import { useTranslation } from '@/i18n';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
 
@@ -55,57 +59,88 @@ export default function RuntimeDetailPage() {
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [dockerRegistryMirror, setDockerRegistryMirror] = useState('');
-  const [dockerRegistryMirrorBusy, setDockerRegistryMirrorBusy] = useState(false);
-  const [dockerRegistryMirrorError, setDockerRegistryMirrorError] = useState<string | null>(null);
+  const [dockerMirrors, setDockerMirrors] = useState<DockerRegistryMirrorConfig[]>([]);
+  const [dockerMirrorDraft, setDockerMirrorDraft] = useState('');
+  const [dockerMirrorBusy, setDockerMirrorBusy] = useState(false);
+  const [dockerMirrorError, setDockerMirrorError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
-    setDockerRegistryMirrorError(null);
+    setDockerMirrorError(null);
     if (selectedRuntime !== 'docker') return () => { disposed = true; };
 
-    const loadMirror = async () => {
+    const loadMirrors = async () => {
       try {
-        const result = await window.electron.invoke(SETTING_GET, SettingKey.DockerRegistryMirror);
+        const result = await window.electron.invoke(SETTING_GET, SettingKey.DockerRegistryMirrors);
         if (!result.success) throw new Error(result.error ?? t('runtimes.docker_config.failed'));
-        const value = result.data?.value;
-        if (!disposed) {
-          setDockerRegistryMirror(
-            typeof value === 'string' && (DOCKER_REGISTRY_MIRRORS as readonly string[]).includes(value)
-              ? value
-              : '',
-          );
+        let value: unknown = result.data?.value;
+        // Upgrade path: older builds stored one preset under a different key.
+        if (value === undefined) {
+          const legacy = await window.electron.invoke(SETTING_GET, SettingKey.DockerRegistryMirror);
+          if (legacy.success) value = legacy.data?.value;
         }
+        if (!disposed) setDockerMirrors(parseDockerRegistryMirrors(value));
       } catch (err) {
-        console.error('Failed to load Docker registry mirror preference:', err);
-        if (!disposed) setDockerRegistryMirrorError(err instanceof Error ? err.message : String(err));
+        console.error('Failed to load Docker registry mirror preferences:', err);
+        if (!disposed) setDockerMirrorError(err instanceof Error ? err.message : String(err));
       }
     };
 
-    loadMirror();
+    loadMirrors();
     return () => {
       disposed = true;
     };
   }, [selectedRuntime, t]);
 
-  const updateDockerRegistryMirror = async (value: string) => {
-    const previous = dockerRegistryMirror;
-    setDockerRegistryMirror(value);
-    setDockerRegistryMirrorBusy(true);
-    setDockerRegistryMirrorError(null);
+  const persistDockerMirrors = async (next: DockerRegistryMirrorConfig[]) => {
+    const previous = dockerMirrors;
+    setDockerMirrors(next);
+    setDockerMirrorBusy(true);
+    setDockerMirrorError(null);
     try {
       const result = await window.electron.invoke(SETTING_UPDATE, {
-        key: SettingKey.DockerRegistryMirror,
-        value,
+        key: SettingKey.DockerRegistryMirrors,
+        value: JSON.stringify(next),
       });
       if (!result.success) throw new Error(result.error ?? t('runtimes.docker_config.failed'));
     } catch (err) {
-      console.error('Failed to save Docker registry mirror preference:', err);
-      setDockerRegistryMirror(previous);
-      setDockerRegistryMirrorError(err instanceof Error ? err.message : String(err));
+      console.error('Failed to save Docker registry mirror preferences:', err);
+      setDockerMirrors(previous);
+      setDockerMirrorError(err instanceof Error ? err.message : String(err));
     } finally {
-      setDockerRegistryMirrorBusy(false);
+      setDockerMirrorBusy(false);
     }
+  };
+
+  const addDockerMirror = (raw: string) => {
+    const url = normalizeDockerRegistryMirrorUrl(raw);
+    if (!url) {
+      setDockerMirrorError(t('runtimes.docker_config.invalid'));
+      return;
+    }
+    if (dockerMirrors.some((mirror) => mirror.url.toLowerCase() === url.toLowerCase())) {
+      setDockerMirrorError(t('runtimes.docker_config.duplicate'));
+      return;
+    }
+    setDockerMirrorDraft('');
+    void persistDockerMirrors([...dockerMirrors, { url, enabled: true }]);
+  };
+
+  const toggleDockerMirror = (index: number) => {
+    void persistDockerMirrors(dockerMirrors.map((mirror, current) =>
+      current === index ? { ...mirror, enabled: !mirror.enabled } : mirror));
+  };
+
+  const moveDockerMirror = (index: number, delta: number) => {
+    const target = index + delta;
+    if (target < 0 || target >= dockerMirrors.length) return;
+    const next = [...dockerMirrors];
+    [next[index], next[target]] = [next[target], next[index]];
+    void persistDockerMirrors(next);
+  };
+
+  const removeDockerMirror = (index: number) => {
+    void persistDockerMirrors(dockerMirrors.filter((_mirror, current) => current !== index));
   };
 
   const load = useCallback(
@@ -326,30 +361,138 @@ export default function RuntimeDetailPage() {
 
               {selectedRuntime === 'docker' && (
                 <section className="bg-light-surface dark:bg-dark-surface rounded-xl border border-light-border dark:border-dark-border shadow-sm p-5">
-                  <h3 className="text-base font-semibold mb-1">{t('runtimes.docker_config.title')}</h3>
-                  <p id="docker-registry-mirror-hint" className="text-xs text-light-subtle dark:text-dark-subtle mb-3">
-                    {t('runtimes.docker_config.hint')}
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <select
-                      id="docker-registry-mirror"
-                      value={dockerRegistryMirror}
-                      onChange={(event) => updateDockerRegistryMirror(event.target.value)}
-                      disabled={dockerRegistryMirrorBusy}
-                      aria-describedby="docker-registry-mirror-hint"
-                      className="bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border rounded px-3 py-1.5 text-sm disabled:opacity-50"
-                    >
-                      <option value="">{t('runtimes.docker_config.direct')}</option>
-                      {DOCKER_REGISTRY_MIRRORS.map((mirror) => (
-                        <option key={mirror} value={mirror}>{mirror}</option>
-                      ))}
-                    </select>
-                    {dockerRegistryMirrorBusy && (
-                      <span className="text-xs text-light-subtle dark:text-dark-subtle">{t('runtimes.docker_config.saving')}</span>
+                  <div className="flex items-start justify-between gap-3 mb-1">
+                    <h3 className="text-base font-semibold">{t('runtimes.docker_config.title')}</h3>
+                    {dockerMirrorBusy && (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-light-subtle dark:text-dark-subtle">
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                        {t('runtimes.docker_config.saving')}
+                      </span>
                     )}
                   </div>
-                  {dockerRegistryMirrorError && (
-                    <p role="alert" className="mt-2 text-sm text-red-500">{dockerRegistryMirrorError}</p>
+                  <p id="docker-registry-mirrors-hint" className="text-xs text-light-subtle dark:text-dark-subtle mb-4">
+                    {t('runtimes.docker_config.hint')}
+                  </p>
+
+                  {dockerMirrors.length === 0 ? (
+                    <p className="mb-4 rounded-lg border border-dashed border-light-border dark:border-dark-border px-3 py-3 text-sm text-light-subtle dark:text-dark-subtle">
+                      {t('runtimes.docker_config.empty')}
+                    </p>
+                  ) : (
+                    <ol className="mb-4 space-y-2" aria-describedby="docker-registry-mirrors-hint">
+                      {dockerMirrors.map((mirror, index) => (
+                        <li
+                          key={mirror.url}
+                          className="flex items-center gap-2 rounded-lg border border-light-border dark:border-dark-border bg-light-bg dark:bg-dark-bg px-3 py-2"
+                        >
+                          <span className="w-5 shrink-0 text-center font-mono text-[11px] text-light-subtle dark:text-dark-subtle">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className={`truncate font-mono text-xs ${mirror.enabled ? '' : 'text-light-subtle line-through dark:text-dark-subtle'}`}>
+                              {mirror.url}
+                            </div>
+                            <div className="text-[11px] text-light-subtle dark:text-dark-subtle">
+                              {mirror.enabled ? t('runtimes.docker_config.enabled') : t('runtimes.docker_config.disabled')}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => moveDockerMirror(index, -1)}
+                            disabled={dockerMirrorBusy || index === 0}
+                            title={t('runtimes.docker_config.move_up')}
+                            aria-label={t('runtimes.docker_config.move_up')}
+                            className="rounded p-1 text-light-subtle hover:bg-light-muted hover:text-light-text disabled:opacity-30 disabled:hover:bg-transparent dark:text-dark-subtle dark:hover:bg-dark-muted dark:hover:text-dark-text"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveDockerMirror(index, 1)}
+                            disabled={dockerMirrorBusy || index === dockerMirrors.length - 1}
+                            title={t('runtimes.docker_config.move_down')}
+                            aria-label={t('runtimes.docker_config.move_down')}
+                            className="rounded p-1 text-light-subtle hover:bg-light-muted hover:text-light-text disabled:opacity-30 disabled:hover:bg-transparent dark:text-dark-subtle dark:hover:bg-dark-muted dark:hover:text-dark-text"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={mirror.enabled}
+                            aria-label={`${mirror.enabled ? t('runtimes.docker_config.disable') : t('runtimes.docker_config.enable')}: ${mirror.url}`}
+                            title={mirror.enabled ? t('runtimes.docker_config.disable') : t('runtimes.docker_config.enable')}
+                            onClick={() => toggleDockerMirror(index)}
+                            disabled={dockerMirrorBusy}
+                            className={`relative h-4 w-7 shrink-0 rounded-full transition-colors disabled:opacity-50 ${mirror.enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-dark-muted'}`}
+                          >
+                            <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${mirror.enabled ? 'left-3.5' : 'left-0.5'}`} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDockerMirror(index)}
+                            disabled={dockerMirrorBusy}
+                            title={t('runtimes.docker_config.remove')}
+                            aria-label={`${t('runtimes.docker_config.remove')}: ${mirror.url}`}
+                            className="rounded p-1 text-light-subtle hover:bg-red-50 hover:text-red-600 disabled:opacity-30 dark:text-dark-subtle dark:hover:bg-red-500/10 dark:hover:text-red-400"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+
+                  <form
+                    className="flex flex-col gap-2 sm:flex-row"
+                    onSubmit={(event) => { event.preventDefault(); addDockerMirror(dockerMirrorDraft); }}
+                  >
+                    <label htmlFor="docker-registry-mirror-input" className="sr-only">
+                      {t('runtimes.docker_config.add_label')}
+                    </label>
+                    <input
+                      id="docker-registry-mirror-input"
+                      type="text"
+                      inputMode="url"
+                      spellCheck={false}
+                      autoComplete="off"
+                      value={dockerMirrorDraft}
+                      onChange={(event) => { setDockerMirrorDraft(event.target.value); setDockerMirrorError(null); }}
+                      placeholder={t('runtimes.docker_config.add_placeholder')}
+                      aria-describedby="docker-registry-mirrors-hint"
+                      disabled={dockerMirrorBusy}
+                      className="min-w-0 flex-1 rounded border border-light-border bg-light-bg px-3 py-1.5 text-sm disabled:opacity-50 dark:border-dark-border dark:bg-dark-bg"
+                    />
+                    <button
+                      type="submit"
+                      disabled={dockerMirrorBusy || !dockerMirrorDraft.trim()}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      <Plus className="h-4 w-4" /> {t('runtimes.docker_config.add')}
+                    </button>
+                  </form>
+
+                  {DOCKER_REGISTRY_MIRRORS.some((preset) => !dockerMirrors.some((mirror) => mirror.url === preset)) && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-light-subtle dark:text-dark-subtle">{t('runtimes.docker_config.suggestions')}</span>
+                      {DOCKER_REGISTRY_MIRRORS
+                        .filter((preset) => !dockerMirrors.some((mirror) => mirror.url === preset))
+                        .map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => addDockerMirror(preset)}
+                            disabled={dockerMirrorBusy}
+                            className="rounded-full border border-light-border px-2.5 py-0.5 text-[11px] font-mono text-light-subtle transition-colors hover:border-blue-400 hover:text-blue-600 disabled:opacity-50 dark:border-dark-border dark:text-dark-subtle dark:hover:border-blue-500 dark:hover:text-blue-400"
+                          >
+                            {new URL(preset).host}
+                          </button>
+                        ))}
+                    </div>
+                  )}
+
+                  {dockerMirrorError && (
+                    <p role="alert" className="mt-2 text-sm text-red-500">{dockerMirrorError}</p>
                   )}
                 </section>
               )}
