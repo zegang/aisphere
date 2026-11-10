@@ -13,6 +13,9 @@ files written by Explore > Export.
 The schemas are shipped with the app because `electron-builder.yml` copies the
 whole `resources` directory to `process.resourcesPath`.
 
+Every JSON file in `resources/market` is a standalone application specification
+and should follow `application-spec.schema.json`.
+
 Explore > Export writes `$schema` on each file, pointing at the matching wrapper
 schema, so editors and CI can discover validation rules from the file itself.
 Exports contain portable specifications only; per-machine runtime state
@@ -75,7 +78,7 @@ on a public host, point `$schema` at the local file when validating offline.
 | `name`, `description`, `category`, `version` | Display and catalog metadata. |
 | `org` | Compatibility field used by current builds. |
 | `author` | String or `{ name, email?, url? }`. New specs should prefer this. |
-| `icon` | URL, data URI, or packaged path. Current builds render it directly as an image source. |
+| `icon` | Legacy image URL/path or Unicode string; or a typed `unicode`/`emoji`, `image`/`svg`, or `lucide` icon object. Images support browser formats such as PNG, JPEG, GIF, WebP, AVIF, ICO, and SVG. |
 | `notes` | Longer Markdown notes or setup hints. |
 | `url`, `homepage`, `license` | Project and license metadata. |
 | `type` | `llm`, `tool`, `agent`, `dataset`, `other`. |
@@ -156,9 +159,9 @@ schema:
 - `postStopActions` → `lifecycle.postStop`
 - `postUnInstallActions` → `lifecycle.postUninstall`
 
-To stay compatible with current builds, put actions that must run now in the
-legacy fields. `postInstallActions` in the bundled File Browser NAS spec is the
-canonical example.
+The bundled File Browser NAS spec uses the canonical `lifecycle` fields. The
+Explore test catalog maps `postInstall`, `postStop`, and `postUninstall` to the
+legacy execution fields for compatibility with the current runtime.
 
 ### Action types
 
@@ -174,6 +177,18 @@ failing the whole lifecycle.
 
 Every action also accepts `id`, `type`, `description`, `continueOnError`,
 `timeoutSeconds`, and `platforms` (`windows`, `linux`, `macos`).
+
+## Built-in runtime prerequisites
+
+Bundled runtime definitions in `resources/runtimes` may declare platform
+prerequisites under `runtime.preInstall`. Docker declares the `windows-wsl2`
+prerequisite for Windows. Before downloading or running Docker Desktop's
+installer, AiSphere requests elevation to enable the Windows Subsystem for
+Linux and Virtual Machine Platform features, install/update WSL, and select
+WSL 2 as the default. If Windows needs a restart, the Docker installation stops
+with a message to restart and retry. Hardware virtualization must be enabled in
+BIOS/UEFI; AiSphere reports that requirement rather than changing firmware
+settings.
 
 ## Workspace component
 
@@ -198,6 +213,28 @@ matching `kind` is consumed.
 `component.hooks` is for **workspace** events (`session-start`,
 `message-send`, `assistant-reply`, `tool-call`) and is separate from the
 application `lifecycle` hooks.
+
+### Application icons
+
+The `icon` field accepts existing string values for backward compatibility.
+Strings containing Unicode characters are rendered as text; image URLs and
+packaged image paths are rendered by the browser. New specifications should
+prefer an explicit object:
+
+```json
+{
+  "icon": { "type": "unicode", "value": "🧠" }
+}
+```
+
+Other supported forms are `{ "type": "emoji", "value": "🧠" }`,
+`{ "type": "image", "src": "https://example.com/icon.webp", "alt": "Example" }`,
+`{ "type": "svg", "src": "data:image/svg+xml,..." }`, and
+`{ "type": "lucide", "name": "Brain" }`. Image and SVG sources use the browser's
+image renderer, supporting common formats including animated GIF and vector
+SVG; provide SVG as a URL or `data:image/svg+xml` source, not raw markup.
+Lucide names are resolved from AiSphere's supported icon set, with a generic
+fallback for names unavailable in the current renderer.
 
 ## Extension policy
 

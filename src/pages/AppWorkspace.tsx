@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { AppInstallControls } from '@/components/AppInstallControls';
+import { ApplicationIcon } from '@/components/ApplicationIcon';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
 import { AppUninstallDialog } from '@/components/AppUninstallDialog';
 import type { AppInstallStatus } from '@/shared/channel-types';
@@ -306,13 +307,11 @@ export default function AppWorkspace() {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-3 min-w-0">
-            {app.icon ? (
-              <img src={app.icon} alt="" className="w-10 h-10 rounded-lg object-contain bg-white shrink-0 shadow-sm" />
-            ) : (
-              <div className="w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 shrink-0">
-                <Box className="w-6 h-6" />
-              </div>
-            )}
+            <ApplicationIcon
+              icon={app.icon}
+              name={app.name}
+              className="w-10 h-10 shrink-0 rounded-lg bg-white shadow-sm"
+            />
             <div className="min-w-0">
               <h2 className="text-xl font-bold truncate leading-tight">{app.name}</h2>
               <div className="flex items-center gap-2 mt-0.5">

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline';">
+    <title>AiSphere startup error</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, "Segoe UI", system-ui, sans-serif;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+        --bg: #f5f7fb;
+        --surface: #fff;
+        --text: #172033;
+        --muted: #64748b;
+        --border: #e2e8f0;
+        --soft: #f1f5f9;
+        --accent: #2563eb;
+        --accent-hover: #1d4ed8;
+        --danger: #dc2626;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111827;
+          --surface: #1f2937;
+          --text: #f3f4f6;
+          --muted: #9ca3af;
+          --border: #374151;
+          --soft: #111827;
+          --accent: #3b82f6;
+          --accent-hover: #2563eb;
+          --danger: #f87171;
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        min-width: 520px;
+        min-height: 100vh;
+        margin: 0;
+        padding: 14px;
+        background:
+          radial-gradient(ellipse at 12% 0%, rgb(59 130 246 / 10%), transparent 36%),
+          var(--bg);
+        color: var(--text);
+      }
+
+      button { font: inherit; }
+      .window { min-height: calc(100vh - 28px); display: flex; flex-direction: column; }
+      .titlebar { height: 42px; display: flex; align-items: center; justify-content: space-between; -webkit-app-region: drag; }
+      .brand { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .02em; }
+      .brand-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 8px; color: white; background: linear-gradient(145deg, #60a5fa, #2563eb 65%, #1d4ed8); box-shadow: 0 3px 8px rgb(37 99 235 / 25%); }
+      .brand-mark svg { width: 15px; height: 15px; }
+      .close { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; -webkit-app-region: no-drag; }
+      .close:hover { color: var(--text); background: var(--border); }
+      .close svg { width: 16px; height: 16px; }
+      .card { flex: 1; display: flex; flex-direction: column; margin-top: 5px; padding: 30px 34px 25px; overflow: hidden; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); box-shadow: 0 18px 50px rgb(15 23 42 / 12%); }
+      .status { display: flex; align-items: center; gap: 14px; }
+      .status-icon { width: 48px; height: 48px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgb(239 68 68 / 18%); border-radius: 16px; background: rgb(239 68 68 / 9%); color: var(--danger); }
+      .status-icon svg { width: 25px; height: 25px; }
+      .eyebrow { margin: 0 0 4px; color: var(--danger); font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+      h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.025em; }
+      .intro { max-width: 520px; margin: 22px 0 22px; color: var(--muted); font-size: 13px; line-height: 1.65; }
+      .detail-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; color: var(--text); font-size: 12px; font-weight: 650; }
+      .error-badge { padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 600; }
+      pre { flex: 1; min-height: 100px; max-height: 320px; margin: 0; padding: 14px 15px; overflow: auto; border: 1px solid var(--border); border-radius: 13px; background: var(--soft); color: var(--muted); font: 11px/1.65 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+      .copy-feedback { min-height: 18px; margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+      .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+      .hint { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+      .buttons { display: flex; flex: 0 0 auto; gap: 9px; }
+      .button { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 12px; font-weight: 650; cursor: pointer; transition: background .15s, border-color .15s, transform .15s; }
+      .button:hover { background: var(--soft); }
+      .button:active { transform: translateY(1px); }
+      .button:focus-visible, .close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      .button svg { width: 15px; height: 15px; }
+      .button-primary { border-color: var(--accent); background: var(--accent); color: white; }
+      .button-primary:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
+
+      @media (max-width: 640px) {
+        body { min-width: 0; padding: 8px; }
+        .window { min-height: calc(100vh - 16px); }
+        .card { padding: 22px 18px 18px; }
+        .actions { align-items: stretch; flex-direction: column; }
+        .buttons { justify-content: flex-end; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="window">
+      <header class="titlebar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 2.8 13.9 9l6.3 2-6.3 2-1.9 6.2L10 13l-6.2-2L10 9l2-6.2Z" fill="currentColor"/><path d="m19 15 .9 2.5 2.3.8-2.3.8L19 21.5l-.8-2.4-2.4-.8 2.4-.8L19 15Z" fill="currentColor" opacity=".8"/></svg>
+          </span>
+          <span>AiSphere</span>
+        </div>
+        <button class="close" id="close" type="button" aria-label="Exit AiSphere" title="Exit AiSphere">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m18 6-12 12M6 6l12 12"/></svg>
+        </button>
+      </header>
+
+      <section class="card" aria-labelledby="title">
+        <div class="status">
+          <div class="status-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>
+          </div>
+          <div>
+            <p class="eyebrow" id="eyebrow">Startup issue</p>
+            <h1 id="title">AiSphere couldn't start</h1>
+          </div>
+        </div>
+
+        <p class="intro" id="intro">Something went wrong while AiSphere was starting. You can copy the diagnostic details to share with support.</p>
+
+        <div class="detail-heading">
+          <span id="detail-label">Error details</span>
+          <span class="error-badge" id="badge">Diagnostic info</span>
+        </div>
+        <pre id="details" tabindex="0" aria-label="Startup error details"></pre>
+        <p class="copy-feedback" id="feedback" aria-live="polite"></p>
+
+        <footer class="actions">
+          <p class="hint" id="hint">AiSphere will close when you choose Exit.</p>
+          <div class="buttons">
+            <button class="button" id="copy" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>
+              <span id="copy-label">Copy details</span>
+            </button>
+            <button class="button button-primary" id="exit" type="button">
+              <span id="exit-label">Exit AiSphere</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+        </footer>
+      </section>
+    </main>
+    <script src="./startup-error.js"></script>
+  </body>
+</html>

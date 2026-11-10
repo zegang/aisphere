@@ -1,5 +1,40 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-009",
   "name": "Web Search Skill",
+  "org": "AiSphere Skills",
+  "author": {
+    "name": "AiSphere"
+  },
+  "version": "1.0.0",
+  "icon": {
+    "type": "unicode",
+    "value": "🔍"
+  },
+  "description": "A workspace skill that guides agents to plan web searches and cite the sources used in their answers.",
+  "category": "Skills",
+  "type": "tool",
   "kind": "skill",
-  "instructions": "Before answering factual questions, outline the search queries required, request the Fetch MCP tools, and merge the results into the answer with source links."
+  "runtime": {
+    "runtime": "native"
+  },
+  "labels": [
+    "skill",
+    "research",
+    "web"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "1MB",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "skill": {
+      "instructions": "Before answering factual questions, outline the search queries required, request the Fetch MCP tools, and merge the results into the answer with source links."
+    }
+  }
 }

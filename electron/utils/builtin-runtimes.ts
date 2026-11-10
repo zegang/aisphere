@@ -38,12 +38,21 @@ export interface BuiltInRuntimeEngine {
   info?: string[];
 }
 
+export interface BuiltInRuntimePreInstallAction {
+  type: 'windows-wsl2';
+}
+
+export interface BuiltInRuntimePreInstall {
+  windows?: BuiltInRuntimePreInstallAction[];
+}
+
 export interface BuiltInRuntimeConfig extends LifecycleActionHooks {
   type: RuntimeKind;
   name: string;
   hasEngine: boolean;
   /** Default autoStart preference when the user never chose one. */
   autoStart: 'always' | 'never' | null;
+  preInstall?: BuiltInRuntimePreInstall;
   install?: BuiltInRuntimeInstall;
   engine?: BuiltInRuntimeEngine;
 }
@@ -77,6 +86,28 @@ function readPlatform(raw: unknown): Record<string, BuiltInRuntimeInstallTarget>
     if (parsed) out[arch] = parsed;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readPreInstall(raw: unknown): BuiltInRuntimePreInstall | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Runtime preInstall must be an object keyed by platform.');
+  }
+
+  const platforms = raw as Record<string, unknown>;
+  const windows = platforms.windows;
+  if (windows === undefined) return {};
+  if (!Array.isArray(windows)) {
+    throw new Error('Windows runtime preInstall actions must be an array.');
+  }
+
+  const actions = windows.map((action) => {
+    if (!action || typeof action !== 'object' || (action as Record<string, unknown>).type !== 'windows-wsl2') {
+      throw new Error('Unsupported Windows runtime preInstall action.');
+    }
+    return { type: 'windows-wsl2' as const };
+  });
+  return { windows: actions };
 }
 
 function readLifecycleActions(raw: unknown): LifecycleAction[] | undefined {
@@ -115,6 +146,7 @@ function normalize(raw: unknown): BuiltInRuntimeConfig | null {
     name: typeof spec.name === 'string' && spec.name ? spec.name : type,
     hasEngine: typeof spec.hasEngine === 'boolean' ? spec.hasEngine : type === 'docker' || type === 'podman',
     autoStart,
+    preInstall: readPreInstall(spec.preInstall),
     postInstallActions: readLifecycleActions(spec.postInstallActions),
     postStopActions: readLifecycleActions(spec.postStopActions),
     postUnInstallActions: readLifecycleActions(spec.postUnInstallActions),

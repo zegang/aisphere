@@ -21,6 +21,8 @@ export interface ChatMessage {
   timestamp: number;
   /** Chain-of-thought streamed by reasoning models (DeepSeek-R1 class). */
   reasoning?: string;
+  /** Localized MCP tool status shown while a tool call is in progress. */
+  activity?: string;
   /** True while the reply is still arriving token-by-token. */
   streaming?: boolean;
 }
@@ -41,6 +43,10 @@ export interface WorkspaceDoc {
   skillIds?: string[];
   /** MCP servers attached to this workspace (empty by default). */
   serverIds?: string[];
+  /** Per-workspace server opt-outs; server.enabled remains a shared default. */
+  disabledServerIds?: string[];
+  /** User-selected folders for local MCP providers, keyed by server id. */
+  serverDirectories?: Record<string, string>;
 }
 
 interface PersistedWorkspace {
@@ -81,6 +87,8 @@ interface WorkspaceState {
   setWorkspaceSkill: (workspaceId: string, skillId: string, attached: boolean) => void;
   /** Attaches/detaches an MCP server without deleting it from the registry. */
   setWorkspaceServer: (workspaceId: string, serverId: string, attached: boolean) => void;
+  setWorkspaceServerEnabled: (workspaceId: string, serverId: string, enabled: boolean) => void;
+  setWorkspaceServerDirectory: (workspaceId: string, serverId: string, directory: string) => void;
 
   // Hooks / instruction packs
   setHookEnabled: (id: string, enabled: boolean) => void;
@@ -92,6 +100,7 @@ interface WorkspaceState {
   removeServer: (id: string) => void;
   setServerEnabled: (id: string, enabled: boolean) => void;
   setToolEnabled: (serverId: string, toolId: string, enabled: boolean) => void;
+  setServerTools: (serverId: string, tools: Array<{ name: string; description: string }>) => void;
 
   // Skills
   addSkill: (skill: Omit<Skill, 'id' | 'source' | 'enabled'>) => string;
@@ -114,6 +123,20 @@ const builtinTools = (prefix: string, names: string[]): McpTool[] =>
     description: `${name} tool provided by the ${prefix} MCP server.`,
   }));
 
+const filesystemToolNames = [
+  'read_file',
+  'write_file',
+  'list_directory',
+  'list_files',
+  'search_files',
+  'rename_file',
+  'inspect_image',
+  'resize_image',
+  'convert_image',
+  'rotate_image',
+  'crop_image',
+];
+
 const makeWorkspace = (name = ''): WorkspaceDoc => ({
   id: `ws-${uid()}`,
   name,
@@ -122,21 +145,21 @@ const makeWorkspace = (name = ''): WorkspaceDoc => ({
   agentId: null,
   skillIds: [],
   serverIds: [],
+  disabledServerIds: [],
+  serverDirectories: {},
 });
 
 const defaultServers: McpServer[] = [
   {
     id: 'srv-file',
-    name: 'Filesystem',
-    description: 'Read, write and organize files in selected folders.',
-    transport: 'stdio',
-    command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-filesystem', '{workspace}'],
-    env: {},
+    name: 'Local Filesystem & Images',
+    description: 'Manage files and transform images in a folder selected for this workspace.',
+    transport: 'local',
+    provider: 'filesystem-image',
     enabled: true,
     autoStart: true,
     status: 'running',
-    tools: builtinTools('fs', ['read_file', 'write_file', 'list_directory', 'search_files']),
+    tools: builtinTools('fs', filesystemToolNames),
   },
   {
     id: 'srv-fetch',
@@ -266,6 +289,29 @@ function loadPersisted(): PersistedWorkspace | null {
     ) {
       return null;
     }
+    parsed.servers = parsed.servers.map((server) => {
+      if (server.id !== 'srv-file') return server;
+      const previousTools = new Map((server.tools ?? []).map((tool) => [tool.name, tool]));
+      return {
+        ...server,
+        name: 'Local Filesystem & Images',
+        description: 'Manage files and transform images in a folder selected for this workspace.',
+        transport: 'local',
+        command: undefined,
+        args: undefined,
+        env: undefined,
+        provider: 'filesystem-image',
+        tools: filesystemToolNames.map((name, index) => {
+          const previous = previousTools.get(name);
+          return {
+            id: previous?.id ?? `fs-tool-${index + 1}`,
+            name,
+            description: previous?.description ?? `${name} tool provided by the filesystem MCP server.`,
+            enabled: previous?.enabled ?? true,
+          };
+        }),
+      };
+    });
     return parsed;
   } catch {
     return null; // corrupted state resets to defaults
@@ -376,8 +422,37 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const next = attached
           ? [...current.filter((id) => id !== serverId), serverId]
           : current.filter((id) => id !== serverId);
-        return { ...workspace, serverIds: next };
+        const disabled = workspace.disabledServerIds ?? [];
+        return {
+          ...workspace,
+          serverIds: next,
+          disabledServerIds: attached ? disabled.filter((id) => id !== serverId) : disabled,
+        };
       }),
+    })),
+
+    setWorkspaceServerEnabled: (workspaceId, serverId, enabled) => set((state) => ({
+      workspaces: state.workspaces.map((workspace) => {
+        if (workspace.id !== workspaceId) return workspace;
+        const disabled = workspace.disabledServerIds ?? [];
+        return {
+          ...workspace,
+          disabledServerIds: enabled
+            ? disabled.filter((id) => id !== serverId)
+            : [...disabled.filter((id) => id !== serverId), serverId],
+        };
+      }),
+    })),
+
+    setWorkspaceServerDirectory: (workspaceId, serverId, directory) => set((state) => ({
+      workspaces: state.workspaces.map((workspace) => (
+        workspace.id !== workspaceId
+          ? workspace
+          : {
+              ...workspace,
+              serverDirectories: { ...(workspace.serverDirectories ?? {}), [serverId]: directory },
+            }
+      )),
     })),
 
     // ---- Hooks / instruction packs ----
@@ -416,6 +491,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
                 args: cfg.args,
                 env: cfg.env,
                 url: cfg.url,
+                provider: cfg.provider,
                 enabled: false,
                 autoStart: false,
                 status: 'stopped',
@@ -549,6 +625,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       workspaces: state.workspaces.map((workspace) => ({
         ...workspace,
         serverIds: (workspace.serverIds ?? []).filter((serverId) => serverId !== id),
+        disabledServerIds: (workspace.disabledServerIds ?? []).filter((serverId) => serverId !== id),
+        serverDirectories: Object.fromEntries(
+          Object.entries(workspace.serverDirectories ?? {}).filter(([serverId]) => serverId !== id),
+        ),
       })),
     })),
 
@@ -558,7 +638,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         updateServer(id, { enabled: false, status: 'stopped' });
         return;
       }
-      updateServer(id, { enabled: true, status: 'connecting' });
+      const server = get().servers.find((item) => item.id === id);
+      updateServer(id, { enabled: true, status: server?.provider === 'filesystem-image' ? 'running' : 'connecting' });
+      if (server?.provider === 'filesystem-image') return;
       setTimeout(() => {
         const server = get().servers.find((item) => item.id === id);
         if (server?.enabled) updateServer(id, { status: 'running' as McpStatus });
@@ -574,6 +656,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             }
           : server,
       ),
+    })),
+
+    setServerTools: (serverId, tools) => set((state) => ({
+      servers: state.servers.map((server) => {
+        if (server.id !== serverId) return server;
+        const previous = new Map(server.tools.map((tool) => [tool.name, tool]));
+        return {
+          ...server,
+          tools: tools.map((tool, index) => {
+            const existing = previous.get(tool.name);
+            return {
+              id: existing?.id ?? `${serverId}-tool-${index + 1}`,
+              name: tool.name,
+              description: tool.description,
+              enabled: existing?.enabled ?? true,
+            };
+          }),
+        };
+      }),
     })),
 
     // ---- Skills ----

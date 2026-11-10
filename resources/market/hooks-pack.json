@@ -1,9 +1,53 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-011",
   "name": "Chat Hooks Pack",
+  "org": "AiSphere Automation",
+  "author": {
+    "name": "AiSphere"
+  },
+  "version": "1.0.0",
+  "icon": {
+    "type": "unicode",
+    "value": "🪝"
+  },
+  "description": "Workspace event hooks for message-send, assistant-reply, and tool-call events.",
+  "category": "Hooks",
+  "type": "tool",
   "kind": "hook",
-  "hooks": [
-    { "event": "message-send", "name": "Context Guard", "description": "Sanitizes the outgoing message before it reaches the model." },
-    { "event": "assistant-reply", "name": "Follow-up Suggester", "description": "Generates suggested follow-up questions after each reply." },
-    { "event": "tool-call", "name": "Tool Audit Log", "description": "Writes every tool invocation to the local audit log." }
-  ]
+  "runtime": {
+    "runtime": "native"
+  },
+  "labels": [
+    "hooks",
+    "automation"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "1MB",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "hooks": [
+      {
+        "event": "message-send",
+        "name": "Context Guard",
+        "description": "Sanitizes the outgoing message before it reaches the model."
+      },
+      {
+        "event": "assistant-reply",
+        "name": "Follow-up Suggester",
+        "description": "Generates suggested follow-up questions after each reply."
+      },
+      {
+        "event": "tool-call",
+        "name": "Tool Audit Log",
+        "description": "Writes every tool invocation to the local audit log."
+      }
+    ]
+  }
 }

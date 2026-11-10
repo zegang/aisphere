@@ -19,6 +19,7 @@ import { LifecycleActionRunner } from '../utils/lifecycle-actions';
 import type { AppInstallControl } from '../utils/app-install-control';
 import { DbStoreService } from './DbStoreService';
 import { LowDbStore } from '../utils/dbstore/lowdb-store';
+import { McpToolBridge } from './McpToolBridge';
 import { NAMESPACE_DEFAULT, MODULE_APP, MODULE_SETTING } from '../../src/shared/modules';
 import { DockerRegistryMirrorConfig, SettingKey, normalizeDockerRegistryMirrors, parseDockerRegistryMirrors } from '../../src/shared/types';
 import {
@@ -68,6 +69,7 @@ function runtimeLabel(type: string): string {
 interface RuntimeInstallSession {
   controller: AbortController;
   pty?: pty.IPty;
+  nonCancellableStep?: string;
   /** Set after the first byte of terminal input was forwarded (avoids log spam). */
   inputLogged?: boolean;
   /** Reports a state transition to the renderer and stores it for late joiners. */
@@ -519,6 +521,9 @@ export class RuntimeService implements Service {
       const session = this.installSessions.get(type);
       if (!session) {
         return { success: false, error: `No active installation found for ${type}` };
+      }
+      if (session.nonCancellableStep) {
+        return { success: false, error: `Cannot abort while ${session.nonCancellableStep}.` };
       }
       session.controller.abort();
       try {
@@ -1051,6 +1056,7 @@ export class RuntimeService implements Service {
     emit: (data: string) => void;
   }): Promise<LifecycleActionRun[]> {
     const { type, platform, arch, downloadsDir, runtimeDir, session, emit } = options;
+    await this.runRuntimePreInstall(type as RuntimeKind, platform, session, emit);
     if (platform === 'win32') {
       await this.installWindowsRuntime(type, arch, downloadsDir, runtimeDir, session, emit);
     } else if (platform === 'darwin') {
@@ -1061,6 +1067,116 @@ export class RuntimeService implements Service {
       throw new Error(`Runtime installation is not supported on ${platform}.`);
     }
     return [await this.runRuntimeLifecycleActions(type as RuntimeKind, 'postInstallActions', emit)];
+  }
+
+  private async runRuntimePreInstall(
+    type: RuntimeKind,
+    platform: NodeJS.Platform,
+    session: RuntimeInstallSession,
+    emit: (data: string) => void,
+  ): Promise<void> {
+    const config = getBuiltInRuntimeConfig(type);
+    const actions = config?.preInstall?.windows ?? (type === 'docker' ? [{ type: 'windows-wsl2' as const }] : []);
+    if (platform !== 'win32') return;
+
+    for (const action of actions) {
+      switch (action.type) {
+        case 'windows-wsl2':
+          await this.prepareWindowsWsl2(session, emit);
+          break;
+        default: {
+          const unsupported: never = action;
+          throw new Error(`Unsupported runtime pre-install action: ${JSON.stringify(unsupported)}`);
+        }
+      }
+    }
+  }
+
+  private async prepareWindowsWsl2(
+    session: RuntimeInstallSession,
+    emit: (data: string) => void,
+  ): Promise<void> {
+    if (session.controller.signal.aborted) throw new Error('Installation aborted');
+
+    const downloadsDir = getDataPath('downloads');
+    const scriptPath = join(downloadsDir, `aisphere-prepare-wsl-${randomUUID()}.ps1`);
+    const stdoutPath = `${scriptPath}.stdout`;
+    const stderrPath = `${scriptPath}.stderr`;
+    const childScript = [
+      "$ErrorActionPreference = 'Stop'",
+      "$wsl = Join-Path $env:SystemRoot 'System32\\wsl.exe'",
+      "if (-not (Test-Path -LiteralPath $wsl)) { throw 'WSL is unavailable on this Windows version. Update Windows and retry.' }",
+      '$restartRequired = $false',
+      "@('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform') | ForEach-Object {",
+      '  $feature = $_',
+      '  $state = (Get-WindowsOptionalFeature -Online -FeatureName $feature).State',
+      "  if ($state -ne 'Enabled') {",
+      "    Write-Output \"Enabling Windows feature $feature...\"",
+      '    $result = Enable-WindowsOptionalFeature -Online -FeatureName $feature -All -NoRestart',
+      '    if ($result.RestartNeeded) { $restartRequired = $true }',
+      '  }',
+      '}',
+      'if ($restartRequired) { Write-Output "AISPHERE_WSL_RESTART_REQUIRED"; exit 0 }',
+      "$virtualization = Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty VirtualizationFirmwareEnabled",
+      "if ($virtualization -eq $false) { throw 'Hardware virtualization is disabled in BIOS/UEFI. Enable Intel VT-x or AMD-V, restart Windows, and retry.' }",
+      "Write-Output 'Installing or updating Windows Subsystem for Linux...'",
+      '& $wsl --install --no-distribution',
+      'if ($LASTEXITCODE -ne 0) { throw "wsl --install failed with exit code $LASTEXITCODE. Restart Windows if WSL features were just enabled, then retry." }',
+      '& $wsl --update',
+      'if ($LASTEXITCODE -ne 0) { throw "wsl --update failed with exit code $LASTEXITCODE. Restart Windows and retry the Docker installation." }',
+      '& $wsl --set-default-version 2',
+      'if ($LASTEXITCODE -ne 0) { throw "Could not set WSL 2 as the default. Restart Windows and retry the Docker installation." }',
+      "Write-Output 'WSL 2 prerequisites are ready.'",
+    ].join('\r\n');
+
+    await fs.mkdir(downloadsDir, { recursive: true });
+    writeFileSync(scriptPath, childScript, 'utf8');
+    emit('Checking and preparing WSL 2 for Docker Desktop. Windows may show a User Account Control prompt.\r\n');
+    session.onStatus?.('installing', { message: 'Preparing Windows Subsystem for Linux (WSL 2)' });
+    session.nonCancellableStep = 'Windows is configuring WSL 2';
+
+    const encodedScript = Buffer.from(childScript, 'utf16le').toString('base64');
+    const quote = (value: string) => this.powerShellQuote(value);
+    const argumentsList = `@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', '${encodedScript}')`;
+    const elevatedCommand = [
+      "$ErrorActionPreference = 'Stop'",
+      `$process = Start-Process -FilePath 'powershell.exe' -ArgumentList ${argumentsList} -Verb RunAs -Wait -PassThru -RedirectStandardOutput ${quote(stdoutPath)} -RedirectStandardError ${quote(stderrPath)}`,
+      `if (Test-Path -LiteralPath ${quote(stdoutPath)}) { Get-Content -LiteralPath ${quote(stdoutPath)} -Raw | Write-Output }`,
+      `if (Test-Path -LiteralPath ${quote(stderrPath)}) { Get-Content -LiteralPath ${quote(stderrPath)} -Raw | Write-Output }`,
+      'exit $process.ExitCode',
+    ].join('; ');
+
+    let output = '';
+    try {
+      await this.getSandbox().runCommand(
+        'powershell.exe',
+        ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', elevatedCommand],
+        {
+          cwd: downloadsDir,
+          shell: false,
+          includeErrorOutput: true,
+          onLog: (chunk) => {
+            output += chunk;
+            emit(chunk);
+          },
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/cancel|canceled|cancelled/i.test(message)) {
+        throw new Error('WSL prerequisite setup was cancelled. Approve the Windows elevation prompt and retry.');
+      }
+      throw new Error(`Could not prepare WSL 2 for Docker Desktop: ${message}`);
+    } finally {
+      session.nonCancellableStep = undefined;
+      await Promise.all([scriptPath, stdoutPath, stderrPath].map((file) => fs.rm(file, { force: true })));
+    }
+
+    if (output.includes('AISPHERE_WSL_RESTART_REQUIRED')) {
+      throw new Error('Windows enabled the WSL 2 features, but a restart is required. Restart Windows, then retry the Docker installation.');
+    }
+    if (session.controller.signal.aborted) throw new Error('Installation aborted');
+    emit('WSL 2 prerequisites are ready.\r\n');
   }
 
   private async installWindowsRuntime(
@@ -1765,9 +1881,14 @@ export class RuntimeService implements Service {
         message
         && typeof message.content === 'string'
         && message.content.trim().length > 0
-        && (message.role === 'system' || message.role === 'user' || message.role === 'assistant'))
+        && (message.role === 'system' || message.role === 'user' || message.role === 'assistant' || message.role === 'tool'))
       .slice(-40)
-      .map((message) => ({ role: message.role, content: message.content.slice(0, 12_000) }));
+      .map((message) => ({
+        role: message.role,
+        content: message.content.slice(0, 12_000),
+        ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+        ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+      }));
     if (messages.length === 0) throw new Error('The chat message is empty.');
 
     const app = await this.getAppStore().get(req.appId) as InstalledApplication | undefined;
@@ -1801,6 +1922,36 @@ export class RuntimeService implements Service {
     const timer = setTimeout(() => controller.abort(), 180_000);
 
     try {
+      const mcpBridge = new McpToolBridge();
+      if (req.mcpServers?.some((server) => server.enabled)) {
+        await mcpBridge.connect(
+          req.mcpServers,
+          req.workspaceDirectories ?? {},
+          req.selectedToolIds,
+        );
+      }
+      if (mcpBridge.tools.length > 0) {
+        try {
+          if (app.capabilities?.toolCalling === false) {
+            throw new Error(`${app.name} is not configured for reliable tool calling. Select a model marked as supporting tool calls, such as Qwen3 4B Tool-Calling Chat.`);
+          }
+          return await this.chatWithEngineTools({
+            appName: app.name,
+            baseUrl,
+            model: modelFile || 'local-model',
+            messages,
+            tools: mcpBridge.tools,
+            bridge: mcpBridge,
+            signal: controller.signal,
+            onDelta,
+            discoveredTools: mcpBridge.discovered,
+          });
+        } finally {
+          await mcpBridge.close();
+        }
+      }
+      await mcpBridge.close();
+
       let response: Response;
       try {
         response = await fetch(`${baseUrl}/v1/chat/completions`, {
@@ -1919,6 +2070,128 @@ export class RuntimeService implements Service {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async chatWithEngineTools(options: {
+    appName: string;
+    baseUrl: string;
+    model: string;
+    messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: unknown[] }>;
+    tools: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
+    bridge: McpToolBridge;
+    signal: AbortSignal;
+    onDelta?: (chunk: Omit<EngineChatStreamEvent, 'requestId'>) => void;
+    discoveredTools: Array<{ serverId: string; name: string; description: string }>;
+  }): Promise<EngineChatResult> {
+    const { appName, baseUrl, model, tools, bridge, signal, onDelta, discoveredTools } = options;
+    const messages: Array<Record<string, unknown>> = [...options.messages];
+    let responseModel = model;
+    let finalContent = '';
+    let finalReasoning = '';
+    const maxToolRounds = 5;
+    let executedToolCalls = 0;
+
+    for (let round = 0; round <= maxToolRounds; round += 1) {
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/v1/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            messages,
+            max_tokens: 2048,
+            temperature: 0.2,
+            stream: false,
+            ...(round < maxToolRounds ? { tools, tool_choice: 'auto' } : {}),
+          }),
+          signal,
+        });
+      } catch (error: any) {
+        if (error?.name === 'AbortError') throw new Error('The engine did not answer within 3 minutes.');
+        throw new Error(`Could not reach the ${appName} engine at ${baseUrl}: ${error?.message ?? error}`);
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(`${appName} returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 300)}` : ''}`);
+      }
+
+      const payload: any = await response.json().catch(() => null);
+      const message = payload?.choices?.[0]?.message;
+      if (typeof payload?.model === 'string' && payload.model) responseModel = payload.model;
+      const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
+
+      if (toolCalls.length === 0) {
+        finalContent = typeof message?.content === 'string' ? message.content.trim() : '';
+        finalReasoning = typeof message?.reasoning_content === 'string' ? message.reasoning_content.trim() : '';
+        if (!finalContent && !finalReasoning) {
+          const engineError = payload?.error?.message;
+          throw new Error(engineError ? `The engine reported an error: ${engineError}` : 'The engine returned an empty response.');
+        }
+        break;
+      }
+
+      if (round === maxToolRounds) {
+        throw new Error(`The engine exceeded the ${maxToolRounds}-round MCP tool-call limit.`);
+      }
+
+      const assistantCall = {
+        role: 'assistant',
+        content: typeof message?.content === 'string' ? message.content : null,
+        tool_calls: toolCalls,
+      };
+      if (executedToolCalls + toolCalls.length > 12) {
+        throw new Error('The engine requested more than 12 tools in one chat. Reduce the requested operations and try again.');
+      }
+      executedToolCalls += toolCalls.length;
+      messages.push(assistantCall);
+
+      for (const call of toolCalls) {
+        const callId = typeof call?.id === 'string' ? call.id : '';
+        const name = typeof call?.function?.name === 'string' ? call.function.name : '';
+        const rawArguments = typeof call?.function?.arguments === 'string' ? call.function.arguments : '{}';
+        const activityName = name || 'Unknown tool';
+        let failed = false;
+        onDelta?.({ toolActivity: { name: activityName, state: 'running' } });
+        let content: string;
+        if (!callId || !name) {
+          content = 'MCP tool call was invalid: the engine omitted its call id or function name.';
+          failed = true;
+        } else if (rawArguments.length > 64_000) {
+          content = 'MCP tool call arguments exceeded the 64 KB limit.';
+          failed = true;
+        } else {
+          try {
+            const args = JSON.parse(rawArguments);
+            content = await bridge.call(name, args);
+            failed = content.startsWith('MCP tool reported an error:');
+          } catch (error) {
+            content = `MCP tool execution failed: ${error instanceof Error ? error.message : String(error)}`;
+            failed = true;
+            this.getLogger().error(content, this.name);
+          }
+        }
+        onDelta?.({ toolActivity: { name: activityName, state: failed ? 'failed' : 'completed' } });
+        messages.push({
+          role: 'tool',
+          tool_call_id: callId || `invalid-${messages.length}`,
+          content: content.slice(0, 20_000),
+        });
+      }
+    }
+
+    const content = finalContent || finalReasoning;
+    if (!content) throw new Error('The engine returned an empty response after MCP tool execution.');
+    if (finalReasoning) onDelta?.({ reasoning: finalReasoning });
+    onDelta?.({ delta: content });
+    this.getLogger().info(`Engine chat with MCP tools answered via ${baseUrl} with model ${responseModel}`, this.name);
+    return {
+      content,
+      model: responseModel || undefined,
+      endpoint: baseUrl,
+      discoveredTools,
+    };
   }
 
   // ---- Runtime configuration export / import (运行时配置) ----

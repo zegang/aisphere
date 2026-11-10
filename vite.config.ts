@@ -46,6 +46,17 @@ export default defineConfig({
             },
           },
         },
+      },
+      {
+        entry: 'electron/startup-error-preload.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron'],
+            },
+          },
+        },
       }
     ]),
     renderer(),

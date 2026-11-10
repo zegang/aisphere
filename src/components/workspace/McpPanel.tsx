@@ -1,12 +1,13 @@
 // MCP tab: only the servers attached to the current workspace are listed.
 // The Browse dialog exposes every installed/registered server and attaching
-// one enables it for the workspace (and starts its simulated connection).
+// one enables it for the workspace; MCP connections are opened for chat calls.
 
 import { useState } from 'react';
-import { Plus, ChevronDown, Server, Link2, Terminal, X, Wrench } from 'lucide-react';
+import { Plus, ChevronDown, Server, Link2, Terminal, X, Wrench, FolderOpen } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { McpServer, McpTransport } from '@/types/workspace';
+import { UTIL_SELECT_DIRECTORY } from '@/shared/channel-types';
 import ComponentPickerDialog from './ComponentPickerDialog';
 import PanelEmptyState from './PanelEmptyState';
 
@@ -30,15 +31,21 @@ export function McpPanel() {
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const setWorkspaceServer = useWorkspaceStore((s) => s.setWorkspaceServer);
   const setServerEnabled = useWorkspaceStore((s) => s.setServerEnabled);
+  const setWorkspaceServerEnabled = useWorkspaceStore((s) => s.setWorkspaceServerEnabled);
+  const setWorkspaceServerDirectory = useWorkspaceStore((s) => s.setWorkspaceServerDirectory);
   const setToolEnabled = useWorkspaceStore((s) => s.setToolEnabled);
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
   const attachedIds = activeWorkspace?.serverIds ?? [];
-  const attachedServers = servers.filter((server) => attachedIds.includes(server.id));
+  const disabledIds = activeWorkspace?.disabledServerIds ?? [];
+  const attachedServers = servers
+    .filter((server) => attachedIds.includes(server.id))
+    .map((server) => ({ ...server, enabled: server.enabled && !disabledIds.includes(server.id) }));
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
 
   const attach = (id: string, next: boolean) => {
     setWorkspaceServer(activeWorkspaceId, id, next);
@@ -47,6 +54,29 @@ export function McpPanel() {
     if (next) {
       const server = servers.find((item) => item.id === id);
       if (server && !server.enabled) setServerEnabled(id, true);
+    }
+  };
+
+  const chooseDirectory = async (serverId: string) => {
+    setScopeError(null);
+    try {
+      const currentPath = activeWorkspace?.serverDirectories?.[serverId];
+      const result = await window.electron.invoke(UTIL_SELECT_DIRECTORY, currentPath);
+      if (result.success && result.data?.path) {
+        setWorkspaceServerDirectory(activeWorkspaceId, serverId, result.data.path);
+      } else if (result.error && result.error !== 'Selection canceled') {
+        setScopeError(result.error);
+      }
+    } catch (error) {
+      setScopeError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const toggleServer = (server: McpServer) => {
+    const enabled = !server.enabled;
+    setWorkspaceServerEnabled(activeWorkspaceId, server.id, enabled);
+    if (enabled && !servers.find((item) => item.id === server.id)?.enabled) {
+      setServerEnabled(server.id, true);
     }
   };
 
@@ -142,7 +172,7 @@ export function McpPanel() {
                         role="switch"
                         aria-checked={server.enabled}
                         aria-label={t('workspace.mcp.toggle', { name: server.name })}
-                        onClick={() => setServerEnabled(server.id, !server.enabled)}
+                        onClick={() => toggleServer(server)}
                         className={`relative h-5 w-9 rounded-full transition-colors ${server.enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-dark-muted'}`}
                       >
                         <span
@@ -155,6 +185,23 @@ export function McpPanel() {
 
                 {open && (
                   <div className="space-y-1 px-3 pb-3">
+                    {server.provider === 'filesystem-image' && (
+                      <div className="rounded-lg border border-light-border p-2 dark:border-dark-border">
+                        <div className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[10px] text-light-subtle dark:text-dark-subtle">
+                            {activeWorkspace?.serverDirectories?.[server.id] ?? t('workspace.mcp.folder_required')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void chooseDirectory(server.id)}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-light-border px-2 py-1 text-[10px] font-medium hover:bg-light-muted dark:border-dark-border dark:hover:bg-dark-muted"
+                          >
+                            <FolderOpen className="h-3 w-3" /> {t('workspace.mcp.choose_folder')}
+                          </button>
+                        </div>
+                        {scopeError && <p className="mt-1 text-[10px] text-red-600 dark:text-red-400">{scopeError}</p>}
+                      </div>
+                    )}
                     <div className="flex items-center gap-1.5 truncate px-1 py-1 text-[10px] text-light-subtle dark:text-dark-subtle">
                       {server.transport === 'stdio' ? (
                         <Terminal className="h-3 w-3 shrink-0" />

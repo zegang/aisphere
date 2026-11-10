@@ -31,9 +31,19 @@ export class Package {
 
   async download(app: InstalledApplication, event?: any, control?: AppInstallControl): Promise<IpcResponse<any>> {
     const logger = this.getLogger();
-    const downloader = new Downloader(logger);
     const appSvc = ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
 
+    if (app.packages.length === 0) {
+      app.install = {
+        ...app.install,
+        installed: false,
+        status: app.install?.status ?? 'installing',
+        installed_at: new Date().toISOString(),
+      };
+      return { success: true, data: app };
+    }
+
+    const downloader = new Downloader(logger);
     const msg = `Downloading ${app.packages.length} packages for ${app.name}`;
     logger.info(msg, 'Package');
     if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, msg);
@@ -158,11 +168,16 @@ export class Package {
 
       // 1. Download
       const downloadResult = await this.download(app, event, control);
-      if (!downloadResult.success || !app.install || !app.install.installed_package) {
+      if (!downloadResult.success || !app.install || (app.packages.length > 0 && !app.install.installed_package)) {
         if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Download failed: ${downloadResult.error}`);
         return downloadResult;
       }
-      if (event) event.sender.send(`app:install:log:${this.getProgressId(app)}`, `Download successful: ${app.install.installed_package}`);
+      if (event) {
+        event.sender.send(
+          `app:install:log:${this.getProgressId(app)}`,
+          app.packages.length > 0 ? `Download successful: ${app.install.installed_package}` : 'No external packages are required.',
+        );
+      }
 
       // 2. Provision the container runtime for image-based apps (pull image).
       if (app.runtime?.runtime === 'docker') {

@@ -47,6 +47,9 @@
       "all_types": "所有类型",
       "all_platforms": "所有平台",
       "all_runtimes": "所有运行环境",
+      "compatible": "适用于我的设备",
+      "compatible_hint": "按平台、架构、内存、可用存储空间和显卡要求筛选",
+      "compatible_unavailable": "无法获取系统信息",
       "clear": "清除筛选"
     },
     "label": {
@@ -570,7 +573,8 @@
     "try_again": "重试",
     "please_wait": "请稍候…",
     "cancel": "取消",
-    "start_launch": "启动并打开"
+    "start_launch": "启动并打开",
+    "run_in_background": "在后台运行"
   },
   "runtimeAutoInstall": {
     "title": "安装 {{runtime}}？",
@@ -652,7 +656,9 @@
       "title": "MCP 工具",
       "clear": "清空",
       "empty": "没有可用的 MCP 工具。请在 MCP 页附加并启用一个服务器。",
-      "browse": "浏览 MCP 服务器"
+      "browse": "浏览 MCP 服务器",
+      "running_tool": "正在运行 {{tool}}…",
+      "failed_tool": "{{tool}} 返回错误"
     },
     "models": {
       "title": "本地模型",
@@ -738,6 +744,8 @@
       "field_transport": "传输方式",
       "field_command": "命令（如 npx / uvx）",
       "field_args": "参数（空格分隔）",
+      "folder_required": "请选择要授权此服务器访问的文件夹。",
+      "choose_folder": "选择文件夹",
       "enable_now": "立即启用并连接",
       "cancel": "取消",
       "create": "添加",

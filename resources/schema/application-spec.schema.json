@@ -106,6 +106,16 @@
     "component": {
       "$ref": "#/$defs/ComponentManifest"
     },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "toolCalling": {
+          "type": "boolean",
+          "description": "Whether this model is designed to return OpenAI-compatible function/tool calls."
+        }
+      },
+      "additionalProperties": true
+    },
     "lifecycle": {
       "$ref": "#/$defs/LifecycleHooks"
     },
@@ -186,9 +196,79 @@
       ]
     },
     "Icon": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Icon URL, data URI, or packaged resource path. Current AiSphere builds render this value directly in an img element."
+      "description": "Application icon as a legacy string, Unicode/emoji, supported Lucide icon, or an image source. Image sources can be common browser-supported formats including PNG, JPEG, GIF, WebP, AVIF, ICO, and SVG.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Legacy image URL or packaged path, or a Unicode/emoji string."
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "unicode",
+                "emoji"
+              ]
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false,
+          "description": "Unicode character, emoji, or short Unicode text."
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "src"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "image",
+                "svg"
+              ]
+            },
+            "src": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Image URL, data:image URI, or packaged path. SVG should be supplied as an image source, not markup."
+            },
+            "alt": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Raster or vector image. Animated GIFs are supported by the browser."
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "name"
+          ],
+          "properties": {
+            "type": {
+              "const": "lucide"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of a Lucide icon supported by the current AiSphere renderer."
+            }
+          },
+          "additionalProperties": false,
+          "description": "Named icon from AiSphere's supported Lucide icon set."
+        }
+      ]
     },
     "AppType": {
       "type": "string",
@@ -545,6 +625,13 @@
           "type": "string",
           "format": "uri-reference",
           "description": "Endpoint for http or sse servers."
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "filesystem-image"
+          ],
+          "description": "AiSphere built-in MCP provider."
         },
         "headers": {
           "type": "object",

@@ -28,6 +28,8 @@ export interface McpServer {
   env?: Record<string, string>;
   /** http / sse transport */
   url?: string;
+  /** Built-in AiSphere MCP provider. */
+  provider?: 'filesystem-image';
   enabled: boolean;
   autoStart: boolean;
   status: McpStatus;

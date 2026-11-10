@@ -1,47 +1,104 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-014",
   "name": "File Browser NAS",
-  "kind": "app",
-  "image": "filebrowser/filebrowser:latest",
-  "hostPort": 8093,
-  "containerPort": 80,
+  "org": "File Browser",
+  "author": {
+    "name": "File Browser"
+  },
+  "version": "latest",
+  "icon": {
+    "type": "unicode",
+    "value": "🗂️"
+  },
+  "url": "https://github.com/filebrowser/filebrowser",
+  "description": "Run a browser-based file manager on your local network. Upload, download, and organize files stored in AiSphere app data.",
   "notes": "Browse and upload files at http://127.0.0.1:8093 after the container is running. Files are stored in the AiSphere app userdata folder.",
-  "postInstallActions": [
-    {
-      "id": "credentials",
-      "type": "docker-log-credentials",
-      "patterns": ["user", "password", "credential"],
-      "tailLines": 200
-    },
-    {
-      "id": "windows-firewall",
-      "type": "windows-firewall",
-      "operation": "ensure",
-      "port": 8093,
-      "ruleName": "AiSphere File Browser NAS (TCP 8093)",
-      "profile": "private",
-      "remoteAddress": "localsubnet"
-    }
+  "category": "File Sharing",
+  "type": "other",
+  "kind": "app",
+  "runtime": {
+    "runtime": "docker",
+    "image": "filebrowser/filebrowser:latest",
+    "options": [
+      "-p",
+      "8093:80",
+      "-v",
+      "{apphome}/userdata:/srv",
+      "-v",
+      "{apphome}/config:/config",
+      "-v",
+      "{apphome}/database:/database"
+    ]
+  },
+  "labels": [
+    "local network",
+    "NAS",
+    "file sharing",
+    "upload",
+    "docker"
   ],
-  "postStopActions": [
-    {
-      "id": "remove-windows-firewall-rule",
-      "type": "windows-firewall",
-      "operation": "remove",
-      "port": 8093,
-      "ruleName": "AiSphere File Browser NAS (TCP 8093)",
-      "profile": "private",
-      "remoteAddress": "localsubnet"
-    }
-  ],
-  "postUnInstallActions": [
-    {
-      "id": "remove-windows-firewall-rule",
-      "type": "windows-firewall",
-      "operation": "remove",
-      "port": 8093,
-      "ruleName": "AiSphere File Browser NAS (TCP 8093)",
-      "profile": "private",
-      "remoteAddress": "localsubnet"
-    }
-  ]
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "User files",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "lifecycle": {
+    "postInstall": [
+      {
+        "id": "credentials",
+        "type": "docker-log-credentials",
+        "patterns": [
+          "user",
+          "password",
+          "credential"
+        ],
+        "tailLines": 200
+      },
+      {
+        "id": "windows-firewall",
+        "type": "windows-firewall",
+        "operation": "ensure",
+        "port": 8093,
+        "ruleName": "AiSphere File Browser NAS (TCP 8093)",
+        "profile": "private",
+        "remoteAddress": "localsubnet",
+        "platforms": [
+          "windows"
+        ]
+      }
+    ],
+    "postStop": [
+      {
+        "id": "remove-windows-firewall-rule",
+        "type": "windows-firewall",
+        "operation": "remove",
+        "port": 8093,
+        "ruleName": "AiSphere File Browser NAS (TCP 8093)",
+        "profile": "private",
+        "remoteAddress": "localsubnet",
+        "platforms": [
+          "windows"
+        ]
+      }
+    ],
+    "postUninstall": [
+      {
+        "id": "remove-windows-firewall-rule",
+        "type": "windows-firewall",
+        "operation": "remove",
+        "port": 8093,
+        "ruleName": "AiSphere File Browser NAS (TCP 8093)",
+        "profile": "private",
+        "remoteAddress": "localsubnet",
+        "platforms": [
+          "windows"
+        ]
+      }
+    ]
+  }
 }

@@ -39,6 +39,7 @@ Below are some highlights of the AiSphere Desktop interface:
     *   **Interactive Shell**: Directly attach to running containers.
     *   **Real-time Logs**: Monitor installation and execution processes with a resizable terminal.
     *   **Internal Web View**: Access web-based AI interfaces (like Open WebUI) directly inside the desktop app.
+    *   **MCP tool calling**: Use compatible local models with attached MCP servers. The built-in filesystem and image tools are restricted to a folder selected separately for each workspace.
 *   **Hardware Monitoring**: Real-time insights into your system's CPU, GPU (NVIDIA/Apple Silicon/Linux), Memory, and Storage availability.
 *   **Global App Store**: An "Explore" section to discover new AI tools tailored for your specific hardware architecture.
 *   **App management**: Select multiple catalog apps to install, or select installed apps to start, stop, or uninstall them in batches. Each installed instance gets a unique ID, and a catalog entry can only be installed once.
@@ -50,6 +51,8 @@ More are on the way...vLLM & SGLang...
 ## Getting Started
 
 To begin your local AI journey, ensure you have a supported container runtime installed via the **Runtimes** tab, then head over to **Explore** to install your first AI application.
+
+On Windows, AiSphere prepares Docker's WSL 2 prerequisites before installing Docker Desktop. Approve the Windows elevation prompt when asked. If Windows reports that a restart is required, restart your computer and retry the Docker installation. Hardware virtualization must be enabled in BIOS/UEFI.
 
 ## Share files on your local network
 
@@ -91,6 +94,7 @@ From the repository root, double-click the `.cmd` files or run them from a termi
 | `scripts\windows\setup.cmd` | Downloads Node.js/Yarn if needed, installs dependencies, and prepares the icons. Run this first. |
 | `scripts\windows\dev.cmd` | Starts Vite and launches Electron in development mode (hot reload). |
 | `scripts\windows\build.cmd` | Builds the renderer/main process and packages a Windows installer. |
+| `scripts\windows\build.cmd fast-debug-build` | Quickly updates the unpacked app while preserving its local database, apps, downloads, logs, and installed runtimes. |
 
 Build options (PowerShell):
 
@@ -100,6 +104,10 @@ Build options (PowerShell):
 
 # Build an unpacked application folder instead (faster, no installer)
 .\scripts\windows\build.ps1 -Kind dir
+
+# Refresh the unpacked app for debugging without deleting its local data.
+# Close AiSphere first, then run it from release\win-unpacked\aisphere.exe.
+.\scripts\windows\build.cmd fast-debug-build
 
 # Build for ARM64
 .\scripts\windows\build.ps1 -Arch arm64

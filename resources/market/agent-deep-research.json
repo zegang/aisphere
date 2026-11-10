@@ -1,8 +1,48 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-010",
   "name": "Deep Researcher Agent",
+  "org": "AiSphere Agents",
+  "author": {
+    "name": "AiSphere"
+  },
+  "version": "1.0.0",
+  "icon": {
+    "type": "unicode",
+    "value": "🔎"
+  },
+  "description": "A research agent that decomposes questions, gathers evidence with GitHub tools and the Web Search skill, then writes a cited report.",
+  "category": "Agents",
+  "type": "agent",
   "kind": "agent",
-  "emoji": "🌐",
-  "instructions": "You are a deep research agent. Break the question into sub-questions, use web fetch and GitHub tools to gather evidence, then synthesize a cited report in Markdown.",
-  "skillIds": ["mkt-app-009"],
-  "toolIds": ["mkt-app-008:mkt-app-008-tool-1", "mkt-app-008:mkt-app-008-tool-3"]
+  "runtime": {
+    "runtime": "native"
+  },
+  "labels": [
+    "agent",
+    "research",
+    "citation"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "1MB",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "agent": {
+      "emoji": "🌐",
+      "instructions": "You are a deep research agent. Break the question into sub-questions, use web fetch and GitHub tools to gather evidence, then synthesize a cited report in Markdown.",
+      "skillIds": [
+        "mkt-app-009"
+      ],
+      "toolIds": [
+        "mkt-app-008:mkt-app-008-tool-1",
+        "mkt-app-008:mkt-app-008-tool-3"
+      ]
+    }
+  }
 }

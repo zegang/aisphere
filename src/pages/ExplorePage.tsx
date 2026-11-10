@@ -1,16 +1,90 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, AppWindow, Search, X, RefreshCw, Upload, FileJson, FolderOpen, FileArchive, CheckCircle2, AlertTriangle, Loader2, CheckSquare } from 'lucide-react';
+import { Download, AppWindow, Search, X, RefreshCw, Upload, FileJson, FolderOpen, FileArchive, CheckCircle2, AlertTriangle, Loader2, CheckSquare, MonitorCheck } from 'lucide-react';
 import { useExploreStore } from '../stores/exploreStore';
 import { useAiSphereStore } from '../stores/aiSphereStore';
 import { useTranslation } from '@/i18n';
-import { EXPLORE_EXPORT, EXPLORE_IMPORT } from '@/shared/channel-types';
+import { EXPLORE_EXPORT, EXPLORE_IMPORT, SYSTEM_INFO } from '@/shared/channel-types';
 import type { ExploreExportResult, ExploreImportResult } from '@/shared/channel-types';
 import { AppInstallControls } from '@/components/AppInstallControls';
+import { ApplicationIcon } from '@/components/ApplicationIcon';
 import type { AppInstallStatus } from '@/shared/channel-types';
+import type { SystemInfoResponse } from '@/types/api';
+
+type ExploreApplication = ReturnType<typeof useExploreStore.getState>['applications'][number];
+
+function systemPlatform(platform: string): string {
+  if (platform === 'win32') return 'windows';
+  if (platform === 'darwin') return 'mac';
+  return platform;
+}
+
+function normalizedArchitecture(value: string): string | null {
+  const architecture = value.trim().toLowerCase();
+  if (['x64', 'amd64', 'x86_64'].includes(architecture)) return 'x64';
+  if (['arm64', 'aarch64'].includes(architecture)) return 'arm64';
+  if (['ia32', 'x86', 'i386', 'i686'].includes(architecture)) return 'ia32';
+  return null;
+}
+
+function requiredBytes(value: string): number | null {
+  const match = /(\d+(?:\.\d+)?)\s*(TB|TIB|GB|GIB|MB|MIB)\b/i.exec(value);
+  if (!match) return null;
+  const unit = match[2].toUpperCase();
+  const exponent = unit.startsWith('T') ? 4 : unit.startsWith('G') ? 3 : 2;
+  return Number(match[1]) * 1024 ** exponent;
+}
+
+function availableAppDisk(system: SystemInfoResponse): number | null {
+  const dataPath = system.data_path.replace(/[\\/]+$/, '');
+  const matchingDisks = system.disks.filter((disk) => {
+    const mount = disk.mount.replace(/[\\/]+$/, '');
+    if (!mount) return false;
+    if (system.platform === 'win32') {
+      return dataPath.toLowerCase().startsWith(mount.toLowerCase());
+    }
+    return dataPath === mount || dataPath.startsWith(`${mount}/`);
+  });
+  matchingDisks.sort((left, right) => right.mount.length - left.mount.length);
+  return matchingDisks[0]?.free ?? null;
+}
+
+function isCompatibleWithSystem(app: ExploreApplication, system: SystemInfoResponse): boolean {
+  const requirements = app.requirements;
+  const platform = systemPlatform(system.platform);
+  if (requirements.platform !== 'any' && requirements.platform !== platform) return false;
+
+  const architecture = normalizedArchitecture(requirements.arch ?? requirements.cpu);
+  const hostArchitecture = normalizedArchitecture(system.arch);
+  if (architecture && hostArchitecture && architecture !== hostArchitecture) return false;
+
+  const requiredMemory = requiredBytes(requirements.memory);
+  if (requiredMemory !== null && system.memory.total < requiredMemory) return false;
+
+  const requiredStorage = requiredBytes(requirements.storage);
+  const availableStorage = availableAppDisk(system);
+  if (requiredStorage !== null && availableStorage !== null && availableStorage < requiredStorage) return false;
+
+  const gpuRequirement = requirements.gpu.trim().toLowerCase();
+  if (gpuRequirement && !/not required|none|no gpu|any/i.test(gpuRequirement)) {
+    if (system.gpus.length === 0) return false;
+    const requiredVendor = gpuRequirement.match(/\b(nvidia|amd|radeon|intel|apple)\b/)?.[1];
+    if (requiredVendor) {
+      const vendorNames = requiredVendor === 'amd' ? ['amd', 'radeon'] : [requiredVendor];
+      if (!system.gpus.some((gpu) => vendorNames.some((vendor) => gpu.model.toLowerCase().includes(vendor)))) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
 
 export default function ExplorePage() {
   const { t } = useTranslation();
   const setView = useAiSphereStore(s => s.setView);
+  const [systemInfo, setSystemInfo] = useState<SystemInfoResponse | null>(null);
+  const [systemInfoError, setSystemInfoError] = useState(false);
+  const [compatibleOnly, setCompatibleOnly] = useState(false);
 
   const {
     applications,
@@ -46,6 +120,26 @@ export default function ExplorePage() {
     loadApplications();
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    window.electron.invoke(SYSTEM_INFO)
+      .then((result) => {
+        if (!active) return;
+        if (!result.success || !result.data) {
+          setSystemInfoError(true);
+          console.error('Could not load system information for Explore compatibility filtering:', result.error);
+          return;
+        }
+        setSystemInfo(result.data);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setSystemInfoError(true);
+        console.error('Could not load system information for Explore compatibility filtering:', error);
+      });
+    return () => { active = false; };
+  }, []);
+
   const categories = useMemo(() => ['All', ...new Set(applications.map(app => app.category))], [applications]);
   const platforms = ['All', 'windows', 'linux', 'mac', 'any'];
   const runtimes = ['All', 'apptainer', 'docker', 'podman', 'conda', 'native'];
@@ -69,12 +163,14 @@ export default function ExplorePage() {
         app.requirements.platform === selectedPlatform || 
         app.requirements.platform === 'any';
       const matchesRuntime = selectedRuntime === 'All' || app.runtime?.runtime === selectedRuntime;
+      const matchesCompatibility = !compatibleOnly
+        || (systemInfo !== null && isCompatibleWithSystem(app, systemInfo));
 
-      return matchesSearch && matchesKind && matchesCategory && matchesPlatform && matchesRuntime;
+      return matchesSearch && matchesKind && matchesCategory && matchesPlatform && matchesRuntime && matchesCompatibility;
     });
-  }, [applications, search, selectedKind, selectedCategory, selectedPlatform, selectedRuntime]);
+  }, [applications, search, selectedKind, selectedCategory, selectedPlatform, selectedRuntime, compatibleOnly, systemInfo]);
 
-  const hasActiveFilters = search !== '' || selectedKind !== 'All' || selectedCategory !== 'All' || selectedPlatform !== 'All' || selectedRuntime !== 'All';
+  const hasActiveFilters = search !== '' || selectedKind !== 'All' || selectedCategory !== 'All' || selectedPlatform !== 'All' || selectedRuntime !== 'All' || compatibleOnly;
 
   // ---- Export / import of app specs (app说明) ----
   const [exportOpen, setExportOpen] = useState(false);
@@ -242,6 +338,22 @@ export default function ExplorePage() {
       </div>
 
       <div className="flex flex-wrap gap-3 mb-6 shrink-0">
+        <button
+          type="button"
+          aria-pressed={compatibleOnly}
+          disabled={!systemInfo}
+          onClick={() => setCompatibleOnly((current) => !current)}
+          title={systemInfoError ? t('explore.filter.compatible_unavailable') : t('explore.filter.compatible_hint')}
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            compatibleOnly
+              ? 'border-blue-600 bg-blue-600 text-white'
+              : 'border-light-border dark:border-dark-border bg-light-surface dark:bg-dark-surface text-light-subtle dark:text-dark-subtle hover:border-blue-500/50 hover:text-blue-600'
+          }`}
+        >
+          <MonitorCheck className="w-4 h-4" />
+          {t('explore.filter.compatible')}
+        </button>
+
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-light-subtle dark:text-dark-subtle" />
           <input
@@ -279,7 +391,10 @@ export default function ExplorePage() {
 
         {hasActiveFilters && (
           <button
-            onClick={clearFilters}
+            onClick={() => {
+              clearFilters();
+              setCompatibleOnly(false);
+            }}
             className="px-3 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 rounded-lg flex items-center gap-1 transition-colors"
           >
             <X className="w-4 h-4" /> {t('explore.filter.clear')}
@@ -387,15 +502,11 @@ export default function ExplorePage() {
               </div>
             )}
             <div className="flex items-start gap-3 mb-2">
-              <div className="shrink-0">
-                {app.icon ? (
-                  <img src={app.icon} alt={app.name} className="w-12 h-12 rounded-lg object-contain bg-white dark:bg-transparent p-1 border border-light-border dark:border-dark-border" />
-                ) : (
-                  <div className="w-12 h-12 rounded-lg bg-light-muted dark:bg-dark-muted flex items-center justify-center">
-                    <AppWindow className="w-6 h-6 text-light-subtle dark:text-dark-subtle" />
-                  </div>
-                )}
-              </div>
+              <ApplicationIcon
+                icon={app.icon}
+                name={app.name}
+                className="shrink-0 w-12 h-12 rounded-lg bg-light-muted dark:bg-dark-muted border border-light-border dark:border-dark-border p-1"
+              />
               <div className="flex-1 min-w-0">
                 {/* Status/metadata badges own the first row; the name is moved
                     to its own full-width line below, so the chips are never

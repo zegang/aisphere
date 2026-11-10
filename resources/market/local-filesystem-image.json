@@ -1,0 +1,92 @@
+{
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-015",
+  "name": "Local Filesystem & Image Tools",
+  "org": "AiSphere",
+  "author": {
+    "name": "AiSphere"
+  },
+  "version": "1.0.0",
+  "icon": {
+    "type": "unicode",
+    "value": "🗂️"
+  },
+  "url": "https://github.com/zegangluo/aisphere",
+  "description": "Give Workspace models scoped tools to list, read, search and rename files, and inspect, resize, convert, rotate or crop images. All operations stay inside a folder you choose for each workspace.",
+  "category": "MCP Server",
+  "type": "tool",
+  "kind": "mcp",
+  "runtime": {
+    "runtime": "native"
+  },
+  "installation": {
+    "method": "native"
+  },
+  "labels": [
+    "mcp",
+    "filesystem",
+    "images",
+    "local"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "Minimal",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "server": {
+      "transport": "local",
+      "provider": "filesystem-image",
+      "tools": [
+        {
+          "name": "list_files",
+          "description": "List files and folders in the selected workspace directory."
+        },
+        {
+          "name": "read_file",
+          "description": "Read a UTF-8 text file in the selected workspace directory."
+        },
+        {
+          "name": "write_file",
+          "description": "Create a new UTF-8 text file without overwriting existing files."
+        },
+        {
+          "name": "list_directory",
+          "description": "List entries in the selected workspace directory."
+        },
+        {
+          "name": "search_files",
+          "description": "Find files by name in the selected workspace directory."
+        },
+        {
+          "name": "rename_file",
+          "description": "Rename or move a file within the selected workspace directory."
+        },
+        {
+          "name": "inspect_image",
+          "description": "Inspect image dimensions, format and metadata."
+        },
+        {
+          "name": "resize_image",
+          "description": "Resize an image and save it to a new file."
+        },
+        {
+          "name": "convert_image",
+          "description": "Convert an image to JPEG, PNG, WebP or AVIF."
+        },
+        {
+          "name": "rotate_image",
+          "description": "Rotate an image and save it to a new file."
+        },
+        {
+          "name": "crop_image",
+          "description": "Crop an image by pixel coordinates and save it to a new file."
+        }
+      ]
+    }
+  }
+}

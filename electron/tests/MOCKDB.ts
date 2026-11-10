@@ -19,26 +19,21 @@ const marketDir = marketDirCandidates.find((dir) => existsSync(dir)) ?? marketDi
 /** file:// URL of a marketplace artifact shipped with the app. */
 const marketFile = (name: string) => pathToFileURL(join(marketDir, name)).href;
 
-const deepseekConfig = JSON.parse(
-  readFileSync(join(marketDir, 'deepseek-r1-1.5b.json'), 'utf8')
-) as {
-  image: string;
-  hostPort: number;
-  containerPort: number;
-  contextSize: number;
-  modelUrl: string;
-};
+function marketSpec(filename: string): ApplicationSpec {
+  const spec = JSON.parse(readFileSync(join(marketDir, filename), 'utf8')) as ApplicationSpec;
+  return {
+    ...spec,
+    // Keep a local manifest artifact for the mock catalog entries that do not
+    // install another package; this mirrors the existing Explore test setup.
+    packages: spec.packages.length > 0 ? spec.packages : [marketFile(filename)],
+    postInstallActions: spec.lifecycle?.postInstall,
+    postStopActions: spec.lifecycle?.postStop,
+    postUnInstallActions: spec.lifecycle?.postUninstall,
+  };
+}
 
-const fileBrowserNasConfig = JSON.parse(
-  readFileSync(join(marketDir, 'filebrowser-nas.json'), 'utf8')
-) as {
-  image: string;
-  hostPort: number;
-  containerPort: number;
-  postInstallActions: ApplicationSpec['postInstallActions'];
-  postStopActions: ApplicationSpec['postStopActions'];
-  postUnInstallActions: ApplicationSpec['postUnInstallActions'];
-};
+const deepseekSpec = marketSpec('deepseek-r1-1.5b.json');
+const fileBrowserNasSpec = marketSpec('filebrowser-nas.json');
 
 const appRequirements = {
   platform: 'any' as const,
@@ -208,13 +203,9 @@ export const MOCK_APPLICATIONS: ApplicationSpec[] = [
     type: 'llm',
     kind: 'engine',
     runtime: {
-      runtime: 'docker',
-      image: deepseekConfig.image,
-      options: ['-p', `${deepseekConfig.hostPort}:${deepseekConfig.containerPort}`],
-      // {model} is replaced by the runtime with the installed GGUF model.
-      args: ['-m', '{model}', '--host', '0.0.0.0', '--port', String(deepseekConfig.containerPort), '-c', String(deepseekConfig.contextSize), '--jinja']
+      ...deepseekSpec.runtime,
     },
-    labels: ['local', 'LLM', 'chat', 'webui', 'docker', 'deepseek', 'reasoning'],
+    labels: deepseekSpec.labels,
     requirements: {
       platform: 'any',
       cpu: 'x64',
@@ -222,9 +213,7 @@ export const MOCK_APPLICATIONS: ApplicationSpec[] = [
       storage: '2GB',
       gpu: 'Not required (CPU inference)'
     },
-    packages: [
-      deepseekConfig.modelUrl
-    ]
+    packages: deepseekSpec.packages
   },
   {
     id: 'app-007',
@@ -396,20 +385,11 @@ export const MOCK_APPLICATIONS: ApplicationSpec[] = [
     category: 'File Sharing',
     type: 'other',
     kind: 'app',
-    runtime: {
-      runtime: 'docker',
-      image: fileBrowserNasConfig.image,
-      options: [
-        '-p', `${fileBrowserNasConfig.hostPort}:${fileBrowserNasConfig.containerPort}`,
-        '-v', '{apphome}/userdata:/srv',
-        '-v', '{apphome}/config:/config',
-        '-v', '{apphome}/database:/database',
-      ],
-    },
-    postInstallActions: fileBrowserNasConfig.postInstallActions,
-    postStopActions: fileBrowserNasConfig.postStopActions,
-    postUnInstallActions: fileBrowserNasConfig.postUnInstallActions,
-    labels: ['local network', 'NAS', 'file sharing', 'upload', 'docker'],
+    runtime: fileBrowserNasSpec.runtime,
+    postInstallActions: fileBrowserNasSpec.lifecycle?.postInstall,
+    postStopActions: fileBrowserNasSpec.lifecycle?.postStop,
+    postUnInstallActions: fileBrowserNasSpec.lifecycle?.postUninstall,
+    labels: fileBrowserNasSpec.labels,
     requirements: {
       platform: 'any',
       cpu: 'Any',

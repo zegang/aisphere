@@ -1,0 +1,60 @@
+{
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-016",
+  "name": "Qwen3 4B Tool-Calling Chat",
+  "org": "Qwen",
+  "author": {
+    "name": "Qwen"
+  },
+  "version": "latest",
+  "icon": {
+    "type": "unicode",
+    "value": "🛠️"
+  },
+  "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF",
+  "description": "Run Qwen3 4B locally with llama.cpp's Jinja chat template and OpenAI-compatible tool calling for Workspace MCP servers. The quantized model requires about 2.5 GB of download storage.",
+  "category": "LLMs Inference Engine",
+  "type": "llm",
+  "kind": "engine",
+  "capabilities": {
+    "toolCalling": true
+  },
+  "runtime": {
+    "runtime": "docker",
+    "image": "ghcr.io/ggml-org/llama.cpp:server",
+    "options": [
+      "-p",
+      "8091:8080"
+    ],
+    "args": [
+      "-m",
+      "{model}",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8080",
+      "-c",
+      "8192",
+      "--jinja"
+    ]
+  },
+  "labels": [
+    "local",
+    "LLM",
+    "chat",
+    "tool-calling",
+    "MCP",
+    "docker"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "x64",
+    "memory": "8GB RAM recommended",
+    "storage": "2.5GB",
+    "gpu": "Not required"
+  },
+  "packages": [
+    "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf"
+  ]
+}

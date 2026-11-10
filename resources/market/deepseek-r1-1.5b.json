@@ -1,7 +1,61 @@
 {
-  "image": "ghcr.io/ggml-org/llama.cpp:server",
-  "hostPort": 8091,
-  "containerPort": 8080,
-  "contextSize": 8192,
-  "modelUrl": "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-006",
+  "name": "DeepSeek R1 1.5B Chat",
+  "org": "DeepSeek",
+  "author": {
+    "name": "DeepSeek"
+  },
+  "version": "latest",
+  "icon": {
+    "type": "unicode",
+    "value": "🧠"
+  },
+  "url": "https://github.com/deepseek-ai/DeepSeek-R1",
+  "description": "Run DeepSeek-R1-Distill-Qwen-1.5B locally on a personal laptop using CPU inference. AiSphere downloads a compact GGUF model and serves it through llama.cpp; after starting, it appears in the Workspace model picker.",
+  "category": "LLMs Inference Engine",
+  "type": "llm",
+  "kind": "engine",
+  "capabilities": {
+    "toolCalling": false
+  },
+  "runtime": {
+    "runtime": "docker",
+    "image": "ghcr.io/ggml-org/llama.cpp:server",
+    "options": [
+      "-p",
+      "8091:8080"
+    ],
+    "args": [
+      "-m",
+      "{model}",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8080",
+      "-c",
+      "8192",
+      "--jinja"
+    ]
+  },
+  "labels": [
+    "local",
+    "LLM",
+    "chat",
+    "webui",
+    "docker",
+    "deepseek",
+    "reasoning"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "x64",
+    "memory": "4GB RAM",
+    "storage": "2GB",
+    "gpu": "Not required (CPU inference)"
+  },
+  "packages": [
+    "https://modelscope.cn/models/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/master/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+  ]
 }

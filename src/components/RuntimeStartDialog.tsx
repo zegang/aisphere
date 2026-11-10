@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Loader2, Play, X } from 'lucide-react';
+import { AlertTriangle, ArrowDownToLine, Loader2, Play, X } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useAppStore } from '@/stores/appStore';
 
@@ -17,6 +17,7 @@ export function RuntimeStartDialog() {
   const { t } = useTranslation();
   const prompt = useAppStore((state) => state.runtimePrompt);
   const confirmStart = useAppStore((state) => state.confirmRuntimeStart);
+  const runInBackground = useAppStore((state) => state.runRuntimeStartInBackground);
   const cancelStart = useAppStore((state) => state.cancelRuntimeStart);
   const dismiss = useAppStore((state) => state.dismissRuntimePrompt);
   const [remember, setRemember] = useState(false);
@@ -114,7 +115,14 @@ export function RuntimeStartDialog() {
               </button>
             </>
           ) : prompt.stage === 'starting' ? (
-            <span className="text-xs text-light-subtle dark:text-dark-subtle">{t('runtimePrompt.please_wait')}</span>
+            <button
+              type="button"
+              onClick={() => { void runInBackground(); }}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
+            >
+              <ArrowDownToLine className="w-4 h-4" />
+              {t('runtimePrompt.run_in_background')}
+            </button>
           ) : (
             <>
               <button
@@ -123,6 +131,14 @@ export function RuntimeStartDialog() {
                 className="px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
               >
                 {t('runtimePrompt.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={() => { void runInBackground(remember); }}
+                className="flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg border border-light-border dark:border-dark-border hover:bg-light-muted dark:hover:bg-dark-muted transition-colors"
+              >
+                <ArrowDownToLine className="w-4 h-4" />
+                {t('runtimePrompt.run_in_background')}
               </button>
               <button
                 type="button"

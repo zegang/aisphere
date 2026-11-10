@@ -126,6 +126,12 @@ export interface AppAuthor {
   [key: string]: unknown;
 }
 
+export type ApplicationIcon =
+  | string
+  | { type: 'unicode' | 'emoji'; value: string }
+  | { type: 'image' | 'svg'; src: string; alt?: string }
+  | { type: 'lucide'; name: string };
+
 export interface AppInstallScript {
   file: string;
   interpreter?: 'auto' | 'powershell' | 'cmd' | 'bash' | 'sh' | 'custom';
@@ -212,6 +218,7 @@ export interface AppComponentManifest {
     args?: string[];
     env?: Record<string, string>;
     url?: string;
+    provider?: 'filesystem-image';
     tools?: Array<{ name: string; description: string }>;
   };
   /** kind `skill`: instruction the model receives while the skill is active. */
@@ -244,7 +251,7 @@ export interface ApplicationSpec extends LifecycleActionHooks {
   url?: string;
   homepage?: string;
   license?: string;
-  icon?: string;
+  icon?: ApplicationIcon;
   description: string;
   /** Longer Markdown notes or setup hints shown to the user. */
   notes?: string;
@@ -267,6 +274,8 @@ export interface ApplicationSpec extends LifecycleActionHooks {
   kind?: AppKind;
   /** Declarative manifest consumed by the workspace after installation. */
   component?: AppComponentManifest;
+  /** Model capabilities that affect Workspace request construction. */
+  capabilities?: { toolCalling?: boolean };
   /** Cross-platform application lifecycle hooks; legacy `post*Actions` fields are aliases. */
   lifecycle?: LifecycleHooks;
   /** Version of the application-specification format. */

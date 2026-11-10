@@ -8,6 +8,7 @@ import { useTranslation } from '@/i18n';
 import { LAN_NAS_APP_ID, LAN_NAS_START, LAN_NAS_STATUS, LAN_NAS_STOP, RUNTIME_ENGINE_STATUS, UTIL_SELECT_DIRECTORY, type LanNasStatus } from '@/shared/channel-types';
 import type { AppInstallStatus } from '@/shared/channel-types';
 import { AppInstallControls } from '@/components/AppInstallControls';
+import { ApplicationIcon } from '@/components/ApplicationIcon';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
 import { AppUninstallDialog } from '@/components/AppUninstallDialog';
 
@@ -422,13 +423,11 @@ export default function AppsPage() {
                       className="absolute left-4 top-4 z-10 h-4 w-4 animate-in zoom-in-90 duration-150 accent-blue-600"
                     />
                   )}
-                  {app.icon ? (
-                    <img src={app.icon} alt="" className={`w-10 h-10 rounded-lg object-contain ${selectionMode && !isNas ? 'ml-6' : ''}`} />
-                  ) : (
-                    <div className={`w-10 h-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 ${selectionMode && !isNas ? 'ml-6' : ''}`}>
-                      <Box className="w-6 h-6" />
-                    </div>
-                  )}
+                  <ApplicationIcon
+                    icon={app.icon}
+                    name={app.name}
+                    className={`w-10 h-10 shrink-0 rounded-lg ${selectionMode && !isNas ? 'ml-6' : ''}`}
+                  />
                   {['installing', 'aborting'].includes(installStatus ?? '') && (
                     <div className="absolute top-4 right-4">
                       <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />

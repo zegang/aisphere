@@ -50,6 +50,9 @@
       "all_types": "All Types",
       "all_platforms": "All Platforms",
       "all_runtimes": "All Runtimes",
+      "compatible": "Compatible with my system",
+      "compatible_hint": "Filter by platform, architecture, RAM, available storage, and GPU requirements",
+      "compatible_unavailable": "System information is unavailable",
       "clear": "Clear Filters"
     },
     "label": {
@@ -581,7 +584,8 @@
     "try_again": "Try Again",
     "please_wait": "Please wait…",
     "cancel": "Cancel",
-    "start_launch": "Start & Launch"
+    "start_launch": "Start & Launch",
+    "run_in_background": "Run in background"
   },
   "runtimeAutoInstall": {
     "title": "Install {{runtime}}?",
@@ -663,7 +667,9 @@
       "title": "MCP Tools",
       "clear": "Clear",
       "empty": "No MCP tools are available. Attach and enable a server in the MCP tab.",
-      "browse": "Browse MCP servers"
+      "browse": "Browse MCP servers",
+      "running_tool": "Running {{tool}}…",
+      "failed_tool": "{{tool}} reported an error"
     },
     "models": {
       "title": "Local models",
@@ -749,6 +755,8 @@
       "field_transport": "Transport",
       "field_command": "Command (e.g. npx / uvx)",
       "field_args": "Arguments (space separated)",
+      "folder_required": "Choose a folder to grant this server access.",
+      "choose_folder": "Choose folder",
       "enable_now": "Enable and connect now",
       "cancel": "Cancel",
       "create": "Add",

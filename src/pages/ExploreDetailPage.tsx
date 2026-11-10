@@ -4,6 +4,7 @@ import { useAiSphereStore } from '../stores/aiSphereStore';
 import { ArrowLeft, Download, AppWindow, Calendar, Shield, Cpu, Layout, Tag, Folder, Info, Globe, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { AppInstallControls } from '@/components/AppInstallControls';
+import { ApplicationIcon } from '@/components/ApplicationIcon';
 import type { AppInstallStatus } from '@/shared/channel-types';
 
 export default function ExploreDetailPage() {
@@ -90,13 +91,11 @@ export default function ExploreDetailPage() {
         {/* Main Info */}
         <div className="lg:col-span-2 space-y-8">
           <div className="flex items-start gap-6">
-            {app.icon ? (
-              <img src={app.icon} alt="" className="w-24 h-24 rounded-2xl object-contain bg-white shadow-sm border border-light-border dark:border-dark-border p-2" />
-            ) : (
-              <div className="w-24 h-24 rounded-2xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600">
-                <AppWindow className="w-12 h-12" />
-              </div>
-            )}
+            <ApplicationIcon
+              icon={app.icon}
+              name={app.name}
+              className="w-24 h-24 shrink-0 rounded-2xl bg-white shadow-sm border border-light-border dark:border-dark-border p-2"
+            />
             <div className="flex-1 pt-2">
               <div className="flex items-center gap-3 mb-2">
                 <h2 className="text-3xl font-bold">{app.name}</h2>

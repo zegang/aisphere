@@ -1,5 +1,40 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-012",
   "name": "Engineering Instructions",
+  "org": "AiSphere Instructions",
+  "author": {
+    "name": "AiSphere"
+  },
+  "version": "1.0.0",
+  "icon": {
+    "type": "unicode",
+    "value": "📝"
+  },
+  "description": "Global workspace instructions for local-first execution, concise answers, source citation, and user consent before remote services.",
+  "category": "Instructions",
+  "type": "other",
   "kind": "instructions",
-  "content": "- Prefer local, privacy-preserving execution.\n- Keep answers concise and cite sources when tools are used.\n- Never send user content to remote services without confirmation."
+  "runtime": {
+    "runtime": "native"
+  },
+  "labels": [
+    "agents.md",
+    "instructions",
+    "policy"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "1MB",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "instructions": {
+      "content": "- Prefer local, privacy-preserving execution.\n- Keep answers concise and cite sources when tools are used.\n- Never send user content to remote services without confirmation."
+    }
+  }
 }

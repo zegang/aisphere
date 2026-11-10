@@ -245,8 +245,27 @@ export interface RuntimeConfigImportResult {
 
 /** One message in an engine chat request (OpenAI chat-completions shape). */
 export interface EngineChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  tool_call_id?: string;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+}
+
+export interface EngineMcpServer {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http' | 'sse' | 'local';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  provider?: 'filesystem-image';
+  enabled: boolean;
+  tools: Array<{ id: string; name: string; enabled: boolean }>;
 }
 
 export interface EngineChatRequest {
@@ -255,6 +274,12 @@ export interface EngineChatRequest {
   messages: EngineChatMessage[];
   /** When set, the answer is also streamed on `ENGINE_CHAT_STREAM`. */
   requestId?: string;
+  /** Enabled MCP servers attached to the active workspace. */
+  mcpServers?: EngineMcpServer[];
+  /** Workspace-specific roots used by local MCP providers. */
+  workspaceDirectories?: Record<string, string>;
+  /** Explicitly selected server/tool keys; omitted means all enabled tools. */
+  selectedToolIds?: string[];
 }
 
 /** One streamed piece of an engine answer (OpenAI delta shape). */
@@ -264,6 +289,8 @@ export interface EngineChatStreamEvent {
   delta?: string;
   /** Chain-of-thought text (DeepSeek-R1 class models). */
   reasoning?: string;
+  /** MCP tool execution status, separate from model reasoning. */
+  toolActivity?: { name: string; state: 'running' | 'completed' | 'failed' };
   /** Final marker: the full answer is available in `content`. */
   done?: boolean;
   /** Failure message when the stream could not be completed. */
@@ -280,6 +307,8 @@ export interface EngineChatResult {
   model?: string;
   /** Base URL that answered (e.g. http://127.0.0.1:8091). */
   endpoint: string;
+  /** Tools discovered from connected MCP servers. */
+  discoveredTools?: Array<{ serverId: string; name: string; description: string }>;
 }
 
 // Generic response/error wrapper

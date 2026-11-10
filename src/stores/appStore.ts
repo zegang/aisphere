@@ -68,7 +68,8 @@ interface AppStore {
   fetchApplications: () => Promise<void>;
   startApplication: (id: string, args?: string[]) => Promise<void>;
   launchApplication: (id: string) => Promise<void>;
-  confirmRuntimeStart: (remember: boolean) => Promise<void>;
+  confirmRuntimeStart: (remember: boolean, runInBackground?: boolean) => Promise<void>;
+  runRuntimeStartInBackground: (remember?: boolean) => Promise<void>;
   cancelRuntimeStart: (remember: boolean) => Promise<void>;
   dismissRuntimePrompt: () => void;
   stopApplication: (id: string) => Promise<boolean>;
@@ -200,26 +201,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  confirmRuntimeStart: async (remember) => {
+  confirmRuntimeStart: async (remember, runInBackground = false) => {
     const prompt = get().runtimePrompt;
     if (!prompt || prompt.stage === 'starting') return;
 
     if (remember) await writeRuntimeAutoStart(prompt.runtime, 'always');
 
     set((state) => ({
-      runtimePrompt: { ...prompt, stage: 'starting', error: undefined },
+      runtimePrompt: runInBackground ? null : { ...prompt, stage: 'starting', error: undefined },
       applications: state.applications.map((a) =>
         a.id === prompt.appId ? { ...a, error: undefined, task: { ...(a.task || {}), status: 'starting' } as any } : a
       ),
     }));
 
-    const result = await window.electron.invoke(RUNTIME_ENGINE_START, prompt.runtime);
-    if (!result.success) {
-      const message = result.error || `Failed to start the ${runtimeLabel(prompt.runtime)} runtime.`;
+    let error: string | undefined;
+    try {
+      const result = await window.electron.invoke(RUNTIME_ENGINE_START, prompt.runtime);
+      if (!result.success) error = result.error || `Failed to start the ${runtimeLabel(prompt.runtime)} runtime.`;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+
+    if (error) {
       set((state) => ({
-        runtimePrompt: { ...prompt, stage: 'error', error: message },
+        runtimePrompt: state.runtimePrompt?.appId === prompt.appId
+          ? { ...prompt, stage: 'error', error }
+          : null,
         applications: state.applications.map((a) =>
-          a.id === prompt.appId ? { ...a, task: { status: 'failed' } as any, error: message } : a
+          a.id === prompt.appId ? { ...a, task: { status: 'failed' } as any, error } : a
         ),
       }));
       return;
@@ -227,6 +236,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     set({ runtimePrompt: null });
     await get().launchApplication(prompt.appId);
+  },
+
+  runRuntimeStartInBackground: async (remember = false) => {
+    const prompt = get().runtimePrompt;
+    if (!prompt) return;
+    if (prompt.stage === 'starting') {
+      set({ runtimePrompt: null });
+      return;
+    }
+    await get().confirmRuntimeStart(remember, true);
   },
 
   cancelRuntimeStart: async (remember) => {

@@ -1,10 +1,54 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-013",
   "name": "Workspace Tools Pack",
+  "org": "AiSphere Tools",
+  "author": {
+    "name": "AiSphere"
+  },
+  "version": "1.0.0",
+  "icon": {
+    "type": "unicode",
+    "value": "🧰"
+  },
+  "description": "A local workspace tool pack for searching saved notes, building outlines, and exporting Markdown.",
+  "category": "Tools",
+  "type": "tool",
   "kind": "tool",
-  "transport": "local",
-  "tools": [
-    { "name": "note_search", "description": "Search saved notes in the current workspace" },
-    { "name": "outline_builder", "description": "Build a Markdown outline from a set of notes" },
-    { "name": "export_md", "description": "Export chat or notes to a Markdown file" }
-  ]
+  "runtime": {
+    "runtime": "native"
+  },
+  "labels": [
+    "tools",
+    "local",
+    "productivity"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "1MB",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "server": {
+      "transport": "local",
+      "tools": [
+        {
+          "name": "note_search",
+          "description": "Search saved notes in the current workspace"
+        },
+        {
+          "name": "outline_builder",
+          "description": "Build a Markdown outline from a set of notes"
+        },
+        {
+          "name": "export_md",
+          "description": "Export chat or notes to a Markdown file"
+        }
+      ]
+    }
+  }
 }

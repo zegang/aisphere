@@ -31,7 +31,7 @@ import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type { ChatMessage } from '@/stores/workspaceStore';
 import { splitToolKey } from '@/types/workspace';
-import { ENGINE_CHAT, ENGINE_CHAT_STREAM, type EngineChatMessage, type EngineChatStreamEvent } from '@/shared/channel-types';
+import { ENGINE_CHAT, ENGINE_CHAT_STREAM, type EngineChatMessage, type EngineChatStreamEvent, type EngineMcpServer } from '@/shared/channel-types';
 import type { InstalledApplication } from '@/types/api';
 import AgentsPanel from '@/components/workspace/AgentsPanel';
 import SkillsPanel from '@/components/workspace/SkillsPanel';
@@ -247,7 +247,10 @@ export default function WorkspacePage() {
   // panel only shows what the user explicitly attached.
   const attachedSkillIds = activeWorkspace?.skillIds ?? [];
   const attachedServerIds = activeWorkspace?.serverIds ?? [];
-  const workspaceServers = servers.filter((server) => attachedServerIds.includes(server.id));
+  const disabledServerIds = activeWorkspace?.disabledServerIds ?? [];
+  const workspaceServers = servers
+    .filter((server) => attachedServerIds.includes(server.id))
+    .map((server) => ({ ...server, enabled: server.enabled && !disabledServerIds.includes(server.id) }));
 
   useEffect(() => {
     fetchApplications();
@@ -339,15 +342,15 @@ export default function WorkspacePage() {
     const effectiveSkillIds = [...new Set([...attachedSkillIds, ...agentSkillIds])];
     const activeSkillDefs = skills.filter((skill) => effectiveSkillIds.includes(skill.id) && skill.enabled);
     const enabledInstructions = instructions.filter((pack) => pack.enabled);
-    const workspaceToolIds = workspaceServers.flatMap((server) =>
+    const workspaceToolIds = workspaceServers.filter((server) => server.enabled).flatMap((server) =>
       server.tools.filter((tool) => tool.enabled).map((tool) => `${server.id}:${tool.id}`),
     );
-    const activeTools = attachedToolIds.length > 0
-      ? attachedToolIds
-      : [...new Set([...(selectedAgent?.toolIds ?? []), ...workspaceToolIds])];
-    const activeToolNames = activeTools.map((key) => {
+    const activeTools = getActiveToolIds(workspaceToolIds);
+    const activeToolNames = activeTools.flatMap((key) => {
       const { serverId, toolId } = splitToolKey(key);
-      return servers.find((s) => s.id === serverId)?.tools.find((tool) => tool.id === toolId)?.name ?? toolId;
+      const server = workspaceServers.find((item) => item.id === serverId);
+      const tool = server?.tools.find((item) => item.id === toolId);
+      return server?.enabled && tool?.enabled ? [tool.name] : [];
     });
 
     return [
@@ -356,10 +359,14 @@ export default function WorkspacePage() {
       ...enabledInstructions.map((pack) => `# ${pack.name}\n${pack.content}`),
       ...activeSkillDefs.map((skill) => `# Skill: ${skill.name}\n${skill.description}\n${skill.instructions}`),
       activeToolNames.length
-        ? `Workspace tools available to the user: ${activeToolNames.join(', ')}. Mention them when relevant; do not claim to run them yourself.`
+        ? `You can call these workspace tools when the user requests an action: ${activeToolNames.join(', ')}. Only claim an action succeeded after its tool call returns successfully.`
         : '',
     ].map((part) => part.trim()).filter(Boolean);
   };
+
+  const getActiveToolIds = (workspaceToolIds: string[]) => attachedToolIds.length > 0
+    ? attachedToolIds
+    : [...new Set([...(selectedAgent?.toolIds ?? []), ...workspaceToolIds])];
 
   /** Recent conversation turns, capped like the engine request did before. */
   const toEngineHistory = (history: ChatMessage[]): EngineChatMessage[] => history
@@ -378,17 +385,22 @@ export default function WorkspacePage() {
     engineAppId: string,
     engineMessages: EngineChatMessage[],
     assistantId: string,
+    mcpServers: EngineMcpServer[],
+    workspaceDirectories: Record<string, string>,
+    selectedToolIds?: string[],
   ) => {
     const requestId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     let streamed = '';
     let thought = '';
+    let activity = '';
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
     const flush = () => {
       flushTimer = null;
       useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
         content: streamed,
         reasoning: thought,
+        activity: activity || undefined,
         streaming: true,
       });
     };
@@ -401,6 +413,14 @@ export default function WorkspacePage() {
       if (!event || event.requestId !== requestId || event.done) return;
       if (event.reasoning) {
         thought += event.reasoning;
+        schedule();
+      }
+      if (event.toolActivity) {
+        activity = event.toolActivity.state === 'running'
+          ? t('workspace.tools.running_tool', { tool: event.toolActivity.name })
+          : event.toolActivity.state === 'failed'
+            ? t('workspace.tools.failed_tool', { tool: event.toolActivity.name })
+            : '';
         schedule();
       }
       if (event.delta) {
@@ -418,18 +438,32 @@ export default function WorkspacePage() {
         appId: engineAppId,
         messages: engineMessages,
         requestId,
+        mcpServers,
+        workspaceDirectories,
+        selectedToolIds,
       });
       if (result.success && result.data?.content) {
+        const discoveredByServer = new Map<string, Array<{ name: string; description: string }>>();
+        for (const tool of result.data.discoveredTools ?? []) {
+          const current = discoveredByServer.get(tool.serverId) ?? [];
+          current.push({ name: tool.name, description: tool.description });
+          discoveredByServer.set(tool.serverId, current);
+        }
+        for (const [serverId, tools] of discoveredByServer) {
+          useWorkspaceStore.getState().setServerTools(serverId, tools);
+        }
         const reasoning = thought.trim();
         useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
           content: result.data.content,
           reasoning: reasoning && reasoning !== result.data.content.trim() ? reasoning : undefined,
+          activity: undefined,
           streaming: false,
         });
       } else {
         useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
           content: t('workspace.chat_failed', { error: result.error ?? '' }),
           reasoning: thought.trim() || undefined,
+          activity: undefined,
           streaming: false,
         });
       }
@@ -437,6 +471,7 @@ export default function WorkspacePage() {
       useWorkspaceStore.getState().updateMessage(workspaceId, assistantId, {
         content: t('workspace.chat_failed', { error: error?.message ?? String(error) }),
         reasoning: thought.trim() || undefined,
+        activity: undefined,
         streaming: false,
       });
     } finally {
@@ -500,7 +535,15 @@ export default function WorkspacePage() {
       streaming: true,
     });
 
-    await streamAssistantReply(workspaceId, engineAppId, engineMessages, assistantId);
+    await streamAssistantReply(
+      workspaceId,
+      engineAppId,
+      engineMessages,
+      assistantId,
+      workspaceServers,
+      activeWorkspace.serverDirectories ?? {},
+      attachedToolIds.length > 0 ? attachedToolIds : undefined,
+    );
   };
 
   /**
@@ -538,7 +581,15 @@ export default function WorkspacePage() {
       streaming: true,
     });
 
-    await streamAssistantReply(workspaceId, engineAppId, engineMessages, messageId);
+    await streamAssistantReply(
+      workspaceId,
+      engineAppId,
+      engineMessages,
+      messageId,
+      workspaceServers,
+      activeWorkspace.serverDirectories ?? {},
+      attachedToolIds.length > 0 ? attachedToolIds : undefined,
+    );
   };
 
   const copyMessage = async (messageId: string, text: string) => {
@@ -942,7 +993,7 @@ export default function WorkspacePage() {
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.map((msg) => {
             const streaming = Boolean(msg.streaming);
-            const waitingFirstToken = streaming && !msg.content && !msg.reasoning;
+            const waitingFirstToken = streaming && !msg.content && !msg.reasoning && !msg.activity;
             const messageContent = msg.id === 'welcome' ? t('workspace.initial_message') : msg.content;
             const feedback = messageFeedback?.messageId === msg.id ? messageFeedback.status : undefined;
             return (
@@ -976,12 +1027,17 @@ export default function WorkspacePage() {
                       ))}
                     </div>
                   ) : (
-                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                      {messageContent}
-                      {streaming && (msg.content || msg.reasoning) ? (
-                        <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-current align-middle" />
-                      ) : null}
-                    </p>
+                    <>
+                      {msg.activity && (
+                        <p className="mb-2 text-xs font-medium text-blue-600 dark:text-blue-400">{msg.activity}</p>
+                      )}
+                      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                        {messageContent}
+                        {streaming && (msg.content || msg.reasoning) ? (
+                          <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse rounded-sm bg-current align-middle" />
+                        ) : null}
+                      </p>
+                    </>
                   )}
                   <span className="text-[10px] opacity-50 mt-1 block">
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

@@ -1,8 +1,45 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-007",
   "name": "Open WebUI",
+  "org": "Open WebUI",
+  "author": {
+    "name": "Open WebUI"
+  },
+  "version": "latest",
+  "icon": {
+    "type": "unicode",
+    "value": "🌐"
+  },
+  "url": "https://github.com/open-webui/open-webui",
+  "description": "A self-hosted chat front-end for local LLM engines. The workspace opens its web interface as a tab once it is running.",
+  "category": "WebUI",
+  "type": "llm",
   "kind": "webui",
-  "image": "ghcr.io/open-webui/open-webui:main",
-  "hostPort": 8092,
-  "containerPort": 8080,
-  "notes": "Serve at http://127.0.0.1:8092 after the container is running."
+  "runtime": {
+    "runtime": "docker",
+    "image": "ghcr.io/open-webui/open-webui:main",
+    "options": [
+      "-p",
+      "8092:8080",
+      "--add-host",
+      "host.docker.internal:host-gateway"
+    ]
+  },
+  "labels": [
+    "local",
+    "chat",
+    "webui",
+    "docker",
+    "open-webui"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "x64",
+    "memory": "4GB RAM",
+    "storage": "5GB",
+    "gpu": "Not required"
+  },
+  "packages": []
 }

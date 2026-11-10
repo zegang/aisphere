@@ -1,12 +1,64 @@
 {
+  "$schema": "https://aisphere.dev/schemas/application-spec.schema.json",
+  "specVersion": "1.0",
+  "id": "app-008",
   "name": "GitHub MCP Server",
+  "org": "Model Context Protocol",
+  "author": {
+    "name": "Model Context Protocol"
+  },
+  "version": "latest",
+  "icon": {
+    "type": "unicode",
+    "value": "🐙"
+  },
+  "url": "https://github.com/modelcontextprotocol/servers",
+  "description": "An MCP server exposing GitHub issue, pull request, and code search tools to workspace agents.",
+  "category": "MCP Server",
+  "type": "tool",
   "kind": "mcp",
-  "transport": "stdio",
-  "command": "npx",
-  "args": ["-y", "@modelcontextprotocol/server-github"],
-  "tools": [
-    { "name": "get_issue", "description": "Get details of a GitHub issue" },
-    { "name": "create_issue", "description": "Create a new issue in a GitHub repository" },
-    { "name": "list_pull_requests", "description": "List open pull requests of a repository" }
-  ]
+  "runtime": {
+    "runtime": "native",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-github"
+    ]
+  },
+  "labels": [
+    "mcp",
+    "tools",
+    "github"
+  ],
+  "requirements": {
+    "platform": "any",
+    "cpu": "Any",
+    "memory": "Minimal",
+    "storage": "1MB",
+    "gpu": "Not required"
+  },
+  "packages": [],
+  "component": {
+    "server": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "tools": [
+        {
+          "name": "get_issue",
+          "description": "Get details of a GitHub issue"
+        },
+        {
+          "name": "create_issue",
+          "description": "Create a new issue in a GitHub repository"
+        },
+        {
+          "name": "list_pull_requests",
+          "description": "List open pull requests of a repository"
+        }
+      ]
+    }
+  }
 }
