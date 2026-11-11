@@ -38,16 +38,22 @@ import {
   RUNTIME_ENGINE_STOP,
   RUNTIME_INSTALL,
   RUNTIME_INSTALL_ABORT,
+  RUNTIME_INSTALL_CHECK,
   RUNTIME_INSTALL_INPUT,
   RUNTIME_INSTALL_RESIZE,
   RUNTIME_INSTALL_STATUS,
   RUNTIME_UNINSTALL,
+  RUNTIME_USE_EXISTING,
   RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeConfigSpec,
   RuntimeDetail,
   RuntimeEngineStatus,
+  ExternalRuntimeInstall,
+  RuntimeInstallCheck,
   RuntimeInstallState,
   RuntimeInstallStatusEvent,
   RuntimeKind,
+  RuntimeUseExistingRequest,
+  WindowsWslStatus,
   runtimeInstallOutputChannel,
   runtimeInstallStatusChannel,
 } from '../../src/shared/channel-types';
@@ -290,6 +296,11 @@ export class RuntimeService implements Service {
     const logger = ServiceContainer.getInstance().get(ServiceName.LogService) as LogService;
     logger.info('Starting', this.name);
     this.registerRuntimePaths();
+    void this.loadExternalRuntimePaths()
+      .catch((error) => {
+        logger.warn(`Could not load saved external runtime paths: ${error instanceof Error ? error.message : String(error)}`, this.name);
+      })
+      .finally(() => this.registerRuntimePaths());
     this.setupHandlers();
   }
 
@@ -300,6 +311,55 @@ export class RuntimeService implements Service {
       // reported as missing.
       this.registerRuntimePaths();
       return { success: true, data: { runtimes: await this.probeRuntimes() } };
+    });
+
+    ipcMain.handle(RUNTIME_INSTALL_CHECK, async (_event, type: string): Promise<IpcResponse<RuntimeInstallCheck>> => {
+      if (!SUPPORTED_RUNTIMES.includes(type as RuntimeKind)) {
+        return { success: false, error: `Unknown runtime type: ${type}` };
+      }
+      try {
+        const runtime = type as RuntimeKind;
+        this.registerRuntimePaths();
+        const status = await this.getEngineStatus(runtime);
+        // Offer the choice whenever a compatible runtime exists outside the
+        // AiSphere folder, even if its CLI happens to be on PATH already.
+        const external = status.managed ? undefined : await this.detectExternalRuntime(runtime);
+        const wsl = runtime === 'docker' && process.platform === 'win32'
+          ? await this.detectWindowsWsl()
+          : undefined;
+        return {
+          success: true,
+          data: {
+            type: runtime,
+            installed: status.installed,
+            managed: status.managed,
+            external,
+            wsl,
+          },
+        };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    });
+
+    ipcMain.handle(RUNTIME_USE_EXISTING, async (_event, request: RuntimeUseExistingRequest): Promise<IpcResponse<{ type: RuntimeKind; path: string }>> => {
+      const type = request?.type;
+      const path = request?.path;
+      if (!SUPPORTED_RUNTIMES.includes(type)) {
+        return { success: false, error: `Unknown runtime type: ${String(type)}` };
+      }
+      if (typeof path !== 'string' || !path || !existsSync(path)) {
+        return { success: false, error: 'The selected runtime executable no longer exists.' };
+      }
+      try {
+        this.externalRuntimePaths.set(type, path);
+        await this.writeExternalRuntimePath(type, path);
+        this.registerRuntimePaths();
+        this.getLogger().info(`Using existing ${runtimeLabel(type)} installation at ${path}`, this.name);
+        return { success: true, data: { type, path } };
+      } catch (error: any) {
+        return { success: false, error: error?.message || String(error) };
+      }
     });
 
     ipcMain.handle(RUNTIME_DETAIL, async (_event, type: string) => {
@@ -573,6 +633,10 @@ export class RuntimeService implements Service {
   private async runCapture(command: string, args: string[]): Promise<string> {
     let output = '';
     await this.getSandbox().runCommand(command, args, {
+      // Runtime executables often live under paths containing spaces
+      // ("C:\Program Files\Docker\..."), which the default shell mode would
+      // split into multiple arguments. Spawn them directly instead.
+      shell: false,
       onLog: (data) => { output += data; },
     });
     return output;
@@ -580,6 +644,9 @@ export class RuntimeService implements Service {
 
   /** Resolves the executable inside the AiSphere runtime folder, falling back to PATH. */
   private runtimeBins: Map<string, string> = new Map();
+
+  /** Executables explicitly adopted from installations outside AiSphere. */
+  private externalRuntimePaths: Map<string, string> = new Map();
 
   private resolveRuntimeBin(type: RuntimeKind): string {
     const cached = this.runtimeBins.get(type);
@@ -597,6 +664,12 @@ export class RuntimeService implements Service {
       this.runtimeBins.set(type, managed);
       return managed;
     }
+
+    // A runtime the user explicitly adopted from an existing system
+    // installation wins over the bare command name, which may not be on PATH.
+    const external = this.externalRuntimePaths.get(type);
+    if (external && existsSync(external)) return external;
+
     return type;
   }
 
@@ -606,7 +679,7 @@ export class RuntimeService implements Service {
 
   /** Checks whether the CLI exists and whether its daemon is answering. */
   private async getEngineStatus(type: RuntimeKind): Promise<RuntimeEngineStatus> {
-    const managed = existsSync(this.getRuntimeDir(type));
+    const managed = !!this.findExecutable(this.getRuntimeDir(type), this.runtimeExecutableName(type), 4);
     const bin = this.resolveRuntimeBin(type);
 
     let installed = false;
@@ -618,8 +691,20 @@ export class RuntimeService implements Service {
       installed = false;
     }
 
+    const external = !installed && !this.externalRuntimePaths.has(type)
+      ? await this.detectExternalRuntime(type)
+      : undefined;
+
     if (!installed) {
-      return { type, installed: false, running: false, managed };
+      return {
+        type,
+        installed: false,
+        running: false,
+        managed,
+        external: !!external,
+        externalPath: external?.path,
+        externalSource: external?.source,
+      };
     }
 
     // Conda and Apptainer are plain CLI tools without a background engine.
@@ -644,6 +729,161 @@ export class RuntimeService implements Service {
         error: error?.message || String(error),
       };
     }
+  }
+
+  private runtimeExecutableName(type: RuntimeKind): string {
+    if (type === 'docker') return 'docker.exe';
+    if (type === 'podman') return 'podman.exe';
+    if (type === 'conda') return 'conda.exe';
+    return process.platform === 'win32' ? 'apptainer.exe' : 'apptainer';
+  }
+
+  /** Restores runtime executables the user adopted from system installations. */
+  private async loadExternalRuntimePaths(): Promise<void> {
+    for (const type of SUPPORTED_RUNTIMES) {
+      const records = await this.getSettingStore().getBy<{ id: string; key: string; value: string }>({
+        key: `runtime.externalPath.${type}`,
+      });
+      const value = records[0]?.value;
+      if (typeof value === 'string' && value && existsSync(value)) {
+        this.externalRuntimePaths.set(type, value);
+      }
+    }
+  }
+
+  private async writeExternalRuntimePath(type: RuntimeKind, path: string | null): Promise<void> {
+    const store = this.getSettingStore();
+    const key = `runtime.externalPath.${type}`;
+    const records = await store.getBy<{ id: string; key: string; value: string }>({ key });
+
+    if (path === null) {
+      if (records.length > 0) await store.deleteBy({ key });
+      return;
+    }
+    if (records.length > 0) {
+      await store.update(records[0].id, { ...records[0], key, value: path });
+    } else {
+      await store.insert({ key, value: path });
+    }
+  }
+
+  /**
+   * Finds a compatible runtime installed outside the AiSphere data folder.
+   * Used to offer "use the existing installation" before downloading one.
+   */
+  private async detectExternalRuntime(type: RuntimeKind): Promise<ExternalRuntimeInstall | undefined> {
+    const fileName = this.runtimeExecutableName(type);
+    const managedRoot = this.getRuntimeDir(type).replace(/[\\/]+$/, '').toLowerCase();
+    const candidates = new Set<string>();
+
+    const addCandidate = (value?: string) => {
+      if (!value) return;
+      for (const line of value.split(/\r?\n/)) {
+        const entry = line.trim().replace(/^"(.*)"$/, '$1');
+        if (!entry) continue;
+        const lower = entry.replace(/[\\/]+$/, '').toLowerCase();
+        if (lower === fileName.toLowerCase()) continue;
+        if (lower.startsWith(managedRoot)) continue;
+        if (existsSync(entry)) candidates.add(entry);
+      }
+    };
+
+    if (process.platform === 'win32') {
+      const programFiles = process.env.ProgramFiles;
+      const localAppData = process.env.LOCALAPPDATA;
+      const programData = process.env.ProgramData;
+      const userProfile = process.env.USERPROFILE;
+      if (type === 'docker') {
+        if (programFiles) addCandidate(join(programFiles, 'Docker', 'Docker', 'resources', 'bin', fileName));
+        if (localAppData) addCandidate(join(localAppData, 'Docker', 'Docker', 'resources', 'bin', fileName));
+      } else if (type === 'podman') {
+        if (programFiles) addCandidate(join(programFiles, 'RedHat', 'Podman', fileName));
+      } else if (type === 'conda') {
+        for (const root of [userProfile, programData]) {
+          if (!root) continue;
+          addCandidate(join(root, 'miniconda3', 'Scripts', fileName));
+          addCandidate(join(root, 'anaconda3', 'Scripts', fileName));
+          addCandidate(join(root, 'Miniconda3', 'Scripts', fileName));
+          addCandidate(join(root, 'Anaconda3', 'Scripts', fileName));
+        }
+      }
+    } else {
+      const known: Record<string, string[]> = {
+        docker: ['/usr/bin/docker', '/usr/local/bin/docker', '/opt/homebrew/bin/docker'],
+        podman: ['/usr/bin/podman', '/usr/local/bin/podman', '/opt/homebrew/bin/podman'],
+        apptainer: ['/usr/bin/apptainer', '/usr/local/bin/apptainer'],
+        conda: ['/opt/conda/bin/conda'],
+      };
+      for (const candidate of known[type] ?? []) addCandidate(candidate);
+    }
+
+    // A runtime that is already on PATH is also an existing installation.
+    try {
+      if (process.platform === 'win32') {
+        addCandidate(await this.runCapture('where.exe', [fileName]));
+      } else {
+        addCandidate(await this.runCapture('which', [fileName]));
+      }
+    } catch {
+      // Not on PATH; the standard install locations above may still match.
+    }
+
+    const found = candidates.values().next().value as string | undefined;
+    if (!found) return undefined;
+
+    let version = '';
+    try {
+      version = (await this.runCapture(found, ['--version'])).trim().split(/\r?\n/)[0];
+    } catch {
+      version = '';
+    }
+    return {
+      type,
+      path: found,
+      source: this.describeExternalRuntime(type, found),
+      version: version || undefined,
+    };
+  }
+
+  private describeExternalRuntime(type: RuntimeKind, path: string): string {
+    if (type === 'docker') return 'Docker Desktop';
+    if (type === 'podman') return 'Podman';
+    if (type === 'conda') return /\bminiconda/i.test(path) ? 'Miniconda' : 'Anaconda';
+    return 'Apptainer';
+  }
+
+  /** Reports whether WSL is available so Docker's pre-install step can be skipped. */
+  private async detectWindowsWsl(): Promise<WindowsWslStatus> {
+    if (process.platform !== 'win32') return { installed: false, ready: false };
+    const wsl = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wsl.exe');
+    if (!existsSync(wsl)) return { installed: false, ready: false };
+
+    let versionOutput = '';
+    try {
+      versionOutput = (await this.runCapture(wsl, ['--version'])).trim();
+    } catch {
+      // Older inbox WSL builds do not support --version.
+    }
+
+    let statusOutput = '';
+    try {
+      statusOutput = (await this.runCapture(wsl, ['--status'])).trim();
+    } catch {
+      // --status fails when WSL is installed but no distro is configured.
+    }
+
+    const installed = !!versionOutput || !!statusOutput;
+    if (!installed) return { installed: false, ready: false };
+
+    // `wsl --status` reports the default version, e.g. "Default Version: 2"
+    // (English) or "默认版本: 2" (Chinese). A successful `wsl --version` means
+    // the modern WSL 2 package is present even when a distro is not set up yet.
+    const explicitlyWsl1 = /(?:default\s*version|默认版本)\s*[:：]\s*1\b/i.test(statusOutput);
+    return {
+      installed: true,
+      ready: !explicitlyWsl1,
+      version: versionOutput.match(/WSL[^\r\n]*/i)?.[0]?.trim() || undefined,
+    };
   }
 
   private engineStarts: Map<string, Promise<RuntimeEngineStatus>> = new Map();
@@ -715,9 +955,9 @@ export class RuntimeService implements Service {
           `Could not start Docker Desktop through its CLI (${error?.message || error}); launching the application directly.`,
           this.name,
         );
-        const exe = this.findExecutable(this.getRuntimeDir('docker'), 'Docker Desktop.exe', 3);
+        const exe = this.findDockerDesktopExecutable();
         if (!exe) {
-          throw new Error('Docker Desktop was not found in the AiSphere runtime folder. Start it manually and try again.');
+          throw new Error('Docker Desktop was not found. Start it manually and try again.');
         }
         const child = spawn(exe, [], { detached: true, stdio: 'ignore' });
         child.on('error', (spawnError) => {
@@ -826,13 +1066,14 @@ export class RuntimeService implements Service {
     const detail: RuntimeDetail = {
       type,
       installed: status.installed,
-      managed: installDirExists,
+      managed: !!managedExecutable,
       version: status.version,
       platform: os.platform(),
       arch: os.arch(),
       installDir,
       installDirExists,
       executable: managedExecutable,
+      external: managedExecutable ? undefined : await this.detectExternalRuntime(type),
       pathEntries,
       engine: {
         hasEngine: type === 'docker' || type === 'podman',
@@ -1096,6 +1337,13 @@ export class RuntimeService implements Service {
   ): Promise<void> {
     if (session.controller.signal.aborted) throw new Error('Installation aborted');
 
+    // Avoid an unnecessary elevation prompt when WSL 2 is already usable.
+    const wslStatus = await this.detectWindowsWsl();
+    if (wslStatus.installed && wslStatus.ready) {
+      emit('WSL 2 is already installed and configured. Skipping the Windows feature setup.\r\n');
+      return;
+    }
+
     const downloadsDir = getDataPath('downloads');
     const scriptPath = join(downloadsDir, `aisphere-prepare-wsl-${randomUUID()}.ps1`);
     const stdoutPath = `${scriptPath}.stdout`;
@@ -1133,12 +1381,22 @@ export class RuntimeService implements Service {
     session.onStatus?.('installing', { message: 'Preparing Windows Subsystem for Linux (WSL 2)' });
     session.nonCancellableStep = 'Windows is configuring WSL 2';
 
-    const encodedScript = Buffer.from(childScript, 'utf16le').toString('base64');
+    // `Start-Process -Verb RunAs` cannot be combined with
+    // -RedirectStandardOutput/-RedirectStandardError (AmbiguousParameterSet).
+    // The elevated child therefore redirects its own combined output to a file
+    // that the parent process reads afterwards.
     const quote = (value: string) => this.powerShellQuote(value);
+    const redirectedScript = [
+      "$ErrorActionPreference = 'Stop'",
+      '& {',
+      childScript,
+      `} *> ${quote(stdoutPath)}`,
+    ].join('\r\n');
+    const encodedScript = Buffer.from(redirectedScript, 'utf16le').toString('base64');
     const argumentsList = `@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', '${encodedScript}')`;
     const elevatedCommand = [
       "$ErrorActionPreference = 'Stop'",
-      `$process = Start-Process -FilePath 'powershell.exe' -ArgumentList ${argumentsList} -Verb RunAs -Wait -PassThru -RedirectStandardOutput ${quote(stdoutPath)} -RedirectStandardError ${quote(stderrPath)}`,
+      `$process = Start-Process -FilePath 'powershell.exe' -ArgumentList ${argumentsList} -Verb RunAs -Wait -PassThru`,
       `if (Test-Path -LiteralPath ${quote(stdoutPath)}) { Get-Content -LiteralPath ${quote(stdoutPath)} -Raw | Write-Output }`,
       `if (Test-Path -LiteralPath ${quote(stderrPath)}) { Get-Content -LiteralPath ${quote(stderrPath)} -Raw | Write-Output }`,
       'exit $process.ExitCode',
@@ -1580,6 +1838,12 @@ export class RuntimeService implements Service {
       if (docker) entries.add(dirname(docker));
     }
 
+    // Adopted system installations must also be reachable for the runners,
+    // which invoke the runtime by name in some places.
+    for (const executable of this.externalRuntimePaths.values()) {
+      if (existsSync(executable)) entries.add(dirname(executable));
+    }
+
     if (entries.size === 0) return;
 
     const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
@@ -1590,6 +1854,34 @@ export class RuntimeService implements Service {
 
     process.env[pathKey] = [...additions, ...current].join(delimiter);
     this.getLogger().info(`Added runtime paths to PATH: ${additions.join(', ')}`, this.name);
+  }
+
+  private findDockerDesktopExecutable(): string | undefined {
+    const managed = this.findExecutable(this.getRuntimeDir('docker'), 'Docker Desktop.exe', 3);
+    if (managed) return managed;
+
+    const candidates: string[] = [];
+    const adopted = this.externalRuntimePaths.get('docker');
+    if (adopted) {
+      // <...>\Docker\Docker\resources\bin\docker.exe -> <...>\Docker\Docker\Docker Desktop.exe
+      candidates.push(join(dirname(adopted), '..', '..', 'Docker Desktop.exe'));
+      candidates.push(join(dirname(adopted), 'Docker Desktop.exe'));
+    }
+    if (process.env.ProgramFiles) {
+      candidates.push(join(process.env.ProgramFiles, 'Docker', 'Docker', 'Docker Desktop.exe'));
+    }
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(join(process.env.LOCALAPPDATA, 'Docker', 'Docker', 'Docker Desktop.exe'));
+    }
+
+    for (const candidate of candidates) {
+      try {
+        if (existsSync(candidate)) return candidate;
+      } catch {
+        // Ignore unreadable paths and try the next candidate.
+      }
+    }
+    return undefined;
   }
 
   private findExecutable(root: string, fileName: string, maxDepth: number): string | undefined {
@@ -2205,11 +2497,14 @@ export class RuntimeService implements Service {
    * config export.
    */
   private async probeRuntimes(): Promise<Array<{ type: RuntimeKind; installed: boolean; managed: boolean; version?: string }>> {
+    this.registerRuntimePaths();
     return Promise.all(SUPPORTED_RUNTIMES.map(async (type) => {
-      const managed = existsSync(getDataPath('runtimes', type));
+      const managed = !!this.findExecutable(this.getRuntimeDir(type), this.runtimeExecutableName(type), 4);
+      const bin = this.resolveRuntimeBin(type);
       try {
         let version = '';
-        await this.getSandbox().runCommand(type, ['--version'], {
+        await this.getSandbox().runCommand(bin, ['--version'], {
+          shell: false,
           onLog: (data) => { version += data; }
         });
         return { type, installed: true, managed, version: version.trim() };

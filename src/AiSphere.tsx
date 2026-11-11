@@ -21,6 +21,7 @@ import ExploreDetailPage from './pages/ExploreDetailPage';
 import WorkspacePage from './pages/WorkspacePage';
 import { RuntimeStartDialog } from './components/RuntimeStartDialog';
 import { RuntimeAutoInstallDialog } from './components/RuntimeAutoInstallDialog';
+import { RuntimeInstallChoiceDialog } from './components/RuntimeInstallChoiceDialog';
 import { AppShutdownProgress } from './components/AppShutdownProgress';
 import appIcon from '@/assets/app-icon.png';
 
@@ -142,6 +143,7 @@ function AiSphere() {
       </div>
       <RuntimeStartDialog />
       <RuntimeAutoInstallDialog />
+      <RuntimeInstallChoiceDialog />
       <AppShutdownProgress />
     </div>
   );

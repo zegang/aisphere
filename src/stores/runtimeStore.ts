@@ -14,11 +14,14 @@ import {
   RUNTIME_ENGINE_STOP,
   RUNTIME_INSTALL,
   RUNTIME_INSTALL_ABORT,
+  RUNTIME_INSTALL_CHECK,
   RUNTIME_INSTALL_STATUS,
   RUNTIME_UNINSTALL,
+  RUNTIME_USE_EXISTING,
   runtimeInstallOutputChannel,
   runtimeInstallStatusChannel,
   type RuntimeEngineStatus,
+  type RuntimeInstallCheck,
   type RuntimeInstallState,
   type RuntimeInstallStatusEvent,
   type RuntimeKind,
@@ -55,6 +58,16 @@ export interface RuntimeLogBuffer {
   text: string;
   start: number;
 }
+
+/** Pending decision shown before downloading a runtime that already exists. */
+export interface RuntimeInstallChoice {
+  type: RuntimeKind;
+  check: RuntimeInstallCheck;
+  /** Human readable trigger, e.g. the app that requested the runtime. */
+  context?: string;
+}
+
+export type RuntimeInstallDecision = 'existing' | 'install' | 'cancel';
 
 export function isRuntimeInstallActive(status?: RuntimeInstallStatusEvent): boolean {
   return !!status && ACTIVE_INSTALL_STATES.includes(status.state);
@@ -94,17 +107,23 @@ interface RuntimeStore {
   starting: Partial<Record<RuntimeKind, boolean>>;
   /** Runtimes whose engine is currently being stopped. */
   stopping: Partial<Record<RuntimeKind, boolean>>;
+  /** Existing system runtime found before an install; user must choose. */
+  installChoice: RuntimeInstallChoice | null;
 
   checkRuntimes: () => Promise<void>;
   startEngine: (type: RuntimeKind) => Promise<boolean>;
   stopEngine: (type: RuntimeKind) => Promise<boolean>;
   syncInstallStatus: () => Promise<void>;
-  installRuntime: (type: RuntimeKind) => Promise<void>;
+  installRuntime: (type: RuntimeKind, options?: { context?: string }) => Promise<boolean>;
+  resolveInstallChoice: (decision: RuntimeInstallDecision) => void;
   uninstallRuntime: (type: RuntimeKind) => Promise<boolean>;
   abortInstall: (type: RuntimeKind) => Promise<void>;
   openLogPanel: (type: RuntimeKind) => void;
   closeLogPanel: () => void;
 }
+
+/** Resolver for the install-choice dialog currently waiting on the user. */
+let pendingInstallChoice: ((decision: RuntimeInstallDecision) => void) | null = null;
 
 let subscriptionsReady = false;
 
@@ -149,6 +168,7 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
   uninstalling: {},
   starting: {},
   stopping: {},
+  installChoice: null,
 
   checkRuntimes: async () => {
     set((state) => ({
@@ -306,12 +326,60 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
     }
   },
 
-  installRuntime: async (type: RuntimeKind) => {
+  installRuntime: async (type, options) => {
     ensureSubscriptions();
     const current = get().installs[type];
     if (isRuntimeInstallActive(current)) {
       set({ logPanelType: type, logPanelDismissed: false });
-      return;
+      return true;
+    }
+
+    const append = (chunk: string) => {
+      set((state) => ({
+        logs: { ...state.logs, [type]: appendToLogBuffer(state.logs[type], chunk) },
+      }));
+    };
+
+    // Check for a compatible installation outside AiSphere first. When one is
+    // found, let the user decide instead of silently downloading a second copy.
+    try {
+      const checkResult = await window.electron.invoke(RUNTIME_INSTALL_CHECK, type);
+      if (checkResult.success && checkResult.data) {
+        const check = checkResult.data as RuntimeInstallCheck;
+        if (!check.managed && check.external) {
+          const decision = await new Promise<RuntimeInstallDecision>((resolve) => {
+            pendingInstallChoice = resolve;
+            set({ installChoice: { type, check, context: options?.context } });
+          });
+          pendingInstallChoice = null;
+          set({ installChoice: null });
+
+          if (decision === 'cancel') return false;
+          if (decision === 'existing') {
+            set({ logPanelType: type, logPanelDismissed: false });
+            append(`\r\nUsing the existing ${check.external.source} installation at ${check.external.path}\r\n`);
+            const useResult = await window.electron.invoke(RUNTIME_USE_EXISTING, {
+              type,
+              path: check.external.path,
+            });
+            if (!useResult.success) {
+              const message = useResult.error || 'Could not use the existing runtime installation.';
+              append(`\r\n\x1b[1;31m${message}\x1b[0m\r\n`);
+              set((state) => ({
+                installs: {
+                  ...state.installs,
+                  [type]: { type, state: 'failed', message, at: Date.now() },
+                },
+              }));
+              return false;
+            }
+            await get().checkRuntimes();
+            return true;
+          }
+        }
+      }
+    } catch {
+      // A failed preflight must not prevent the user from installing.
     }
 
     set((state) => ({
@@ -323,12 +391,6 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
         [type]: { type, state: 'starting', message: 'Preparing installation...', at: Date.now() },
       },
     }));
-
-    const append = (chunk: string) => {
-      set((state) => ({
-        logs: { ...state.logs, [type]: appendToLogBuffer(state.logs[type], chunk) },
-      }));
-    };
 
     append(`\x1b[1;34mStarting ${type} installation...\x1b[0m\r\n`);
 
@@ -347,9 +409,10 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
             },
           };
         });
-      } else {
-        useLifecycleHistoryStore.getState().recordRuns('runtime', type, type, result.data?.lifecycleRuns);
+        return false;
       }
+      useLifecycleHistoryStore.getState().recordRuns('runtime', type, type, result.data?.lifecycleRuns);
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       append(`\r\n\x1b[1;31m${message}\x1b[0m\r\n`);
@@ -359,9 +422,17 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
           [type]: { type, state: 'failed', message, at: Date.now() },
         },
       }));
+      return false;
     } finally {
       await get().checkRuntimes();
     }
+  },
+
+  resolveInstallChoice: (decision) => {
+    const resolve = pendingInstallChoice;
+    pendingInstallChoice = null;
+    set({ installChoice: null });
+    resolve?.(decision);
   },
 
   uninstallRuntime: async (type: RuntimeKind) => {

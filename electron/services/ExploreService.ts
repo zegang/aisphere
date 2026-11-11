@@ -19,13 +19,23 @@ import { RuntimeService } from './RuntimeService';
 import type { RuntimeKind } from '../../src/shared/channel-types';
 import { fileStamp, slugName, compressDirectory, extractArchive, collectSpecJsonFiles } from '../utils/spec-io';
 import { join } from 'path';
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { AppInstallControl } from '../utils/app-install-control';
 
 // Stable schema identifiers published alongside `resources/schema`. Exported
 // files point at them so editors and CI can validate without extra setup.
 const APP_EXPORT_SCHEMA_URL = 'https://aisphere.dev/schemas/app-spec-export.schema.json';
 const APP_CATALOG_SCHEMA_URL = 'https://aisphere.dev/schemas/app-catalog.schema.json';
+
+/**
+ * Market specs are shipped as extra resources. In packaged builds they live
+ * next to the executable under `process.resourcesPath`; in dev they live in
+ * the project folder.
+ */
+const MARKET_DIR_CANDIDATES = [
+  join(process.resourcesPath ?? '', 'market'),
+  join(process.cwd(), 'resources', 'market'),
+];
 
 export class ExploreService implements Service {
   name = ServiceName.ExploreService;
@@ -101,6 +111,77 @@ export class ExploreService implements Service {
     return ServiceContainer.getInstance().get<AppService>(ServiceName.AppService);
   }
 
+  /**
+   * Reads every `*.json` spec shipped with the app. Market files are the
+   * canonical catalog definition; malformed files are skipped with a warning
+   * so one bad spec cannot hide the rest of the catalog.
+   */
+  private loadMarketApplications(): ApplicationSpec[] {
+    const marketDir = MARKET_DIR_CANDIDATES.find((dir) => dir && existsSync(dir));
+    if (!marketDir) {
+      this.getLogger().warn('No market resource directory found.', this.name);
+      return [];
+    }
+
+    const apps: ApplicationSpec[] = [];
+    let entries: string[];
+    try {
+      entries = readdirSync(marketDir);
+    } catch (error) {
+      this.getLogger().warn(`Could not read market directory ${marketDir}: ${this.errorMessage(error)}`, this.name);
+      return [];
+    }
+
+    for (const entry of entries.sort()) {
+      if (!entry.toLowerCase().endsWith('.json')) continue;
+      const file = join(marketDir, entry);
+      try {
+        const spec = JSON.parse(readFileSync(file, 'utf8')) as ApplicationSpec;
+        if (!spec || typeof spec !== 'object' || typeof spec.id !== 'string' || !spec.id.trim()) {
+          this.getLogger().warn(`Skipping market spec ${entry} without a valid id.`, this.name);
+          continue;
+        }
+        apps.push({
+          ...spec,
+          id: spec.id.trim(),
+          // Runtime dispatch still reads the legacy aliases; mirror the
+          // forward-compatible lifecycle hooks into them.
+          postInstallActions: spec.postInstallActions ?? spec.lifecycle?.postInstall,
+          postStopActions: spec.postStopActions ?? spec.lifecycle?.postStop,
+          postUnInstallActions: spec.postUnInstallActions ?? spec.lifecycle?.postUninstall,
+        });
+      } catch (error) {
+        this.getLogger().warn(`Skipping invalid market spec ${entry}: ${this.errorMessage(error)}`, this.name);
+      }
+    }
+    return apps;
+  }
+
+  /**
+   * Merges the built-in catalog, the shipped market specs and locally imported
+   * specs. Later sources win for duplicate ids, and every id appears once.
+   */
+  private mergeCatalog(...sources: ApplicationSpec[][]): ApplicationSpec[] {
+    const byId = new Map<string, ApplicationSpec>();
+    for (const apps of sources) {
+      for (const app of apps) {
+        if (!app || typeof app.id !== 'string' || !app.id.trim()) continue;
+        const id = app.id.trim();
+        byId.set(id, { ...byId.get(id), ...app, id });
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private async getCatalogApplications(): Promise<ApplicationSpec[]> {
+    const imported = await this.getDBStore().list() as ApplicationSpec[];
+    return this.mergeCatalog(MOCK_APPLICATIONS, this.loadMarketApplications(), imported);
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+
   private setupHandlers() {
     ipcMain.handle(EXPLORE_INSTALL_CONTROL, async (_event, request: AppInstallControlRequest): Promise<IpcResponse<AppInstallControlResult>> => {
       const { appId, action } = request ?? {};
@@ -119,10 +200,8 @@ export class ExploreService implements Service {
     });
 
     ipcMain.handle(EXPLORE_LIST, async () => {
-      let appsMarket = await this.getDBStore().list() as ApplicationSpec[];
-      // Merge Mock for tests
-      let apps: ApplicationSpec[] = [ ...MOCK_APPLICATIONS, ...appsMarket ];
-      let installedApps = await this.getAppService().listApps();
+      const apps = await this.getCatalogApplications();
+      const installedApps = await this.getAppService().listApps();
 
       const mergedApps: ExploreApplication[] = apps.map(app => {
         const installedInfo = installedApps.find(a => (a.catalogId || a.id) === app.id);
@@ -133,7 +212,7 @@ export class ExploreService implements Service {
     });
 
     ipcMain.handle(EXPLORE_DETAIL, async (_event, uuid: string) => {
-      const app = await this.getDBStore().get(uuid) ?? MOCK_APPLICATIONS.find((item) => item.id === uuid);
+      const app = (await this.getCatalogApplications()).find((item) => item.id === uuid);
       return { success: true, data: { app } };
     });
 
@@ -147,8 +226,7 @@ export class ExploreService implements Service {
       this.installingCatalogIds.add(requestedCatalogId);
       let catalogApp: ApplicationSpec | undefined;
       try {
-        catalogApp = MOCK_APPLICATIONS.find((item) => item.id === requestedCatalogId)
-          ?? await this.getDBStore().get(requestedCatalogId) as ApplicationSpec | undefined;
+        catalogApp = (await this.getCatalogApplications()).find((item) => item.id === requestedCatalogId);
       } catch (error) {
         this.installingCatalogIds.delete(requestedCatalogId);
         const message = error instanceof Error ? error.message : String(error);
@@ -433,10 +511,11 @@ export class ExploreService implements Service {
       const normalized = parsed.map((raw) => this.normalizeImportedApp(raw)).filter((a): a is ApplicationSpec => a !== null);
       if (normalized.length === 0) throw new Error('No valid app specs found in the selection.');
 
-      // Skip anything already known (built-ins, installed apps, prior imports).
+      // Skip anything already known (built-ins, market specs, installed apps, prior imports).
       const stores = await Promise.all([this.getDBStore().list(), this.getAppService().listApps()]);
       const existingIds = new Set<string>([
         ...MOCK_APPLICATIONS.map((a) => a.id),
+        ...this.loadMarketApplications().map((a) => a.id),
         ...stores[0].map((a: any) => String(a.id)),
         ...stores[1].map((a: any) => String(a.id)),
       ]);

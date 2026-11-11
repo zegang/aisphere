@@ -31,6 +31,8 @@ export const SYSTEM_INFO = 'system:info' as const;
 export const REMOTE_ACCESS_STATUS = 'remote-access:status' as const;
 export const RUNTIME_CHECK = 'runtime:check' as const;
 export const RUNTIME_INSTALL = 'runtime:install' as const;
+export const RUNTIME_INSTALL_CHECK = 'runtime:install:check' as const;
+export const RUNTIME_USE_EXISTING = 'runtime:useExisting' as const;
 export const RUNTIME_UNINSTALL = 'runtime:uninstall' as const;
 export const RUNTIME_DETAIL = 'runtime:detail' as const;
 export const RUNTIME_ENGINE_STATUS = 'runtime:engine:status' as const;
@@ -68,7 +70,49 @@ export interface RuntimeEngineStatus {
   managed: boolean;
   version?: string;
   error?: string;
+  /** A compatible runtime was found outside AiSphere but is not being used yet. */
+  external?: boolean;
+  /** Executable of the detected external installation, when known. */
+  externalPath?: string;
+  /** Human readable source of the external installation (e.g. Docker Desktop). */
+  externalSource?: string;
 }
+
+/** Existing runtime installation discovered outside the AiSphere data folder. */
+export interface ExternalRuntimeInstall {
+  type: RuntimeKind;
+  /** Executable the user can adopt without reinstalling the runtime. */
+  path: string;
+  /** Human readable product/source name. */
+  source: string;
+  version?: string;
+}
+
+export interface WindowsWslStatus {
+  installed: boolean;
+  /** WSL 2 is installed and configured as the default version. */
+  ready: boolean;
+  version?: string;
+}
+
+/** Result of the pre-install probe shown before a runtime is downloaded. */
+export interface RuntimeInstallCheck {
+  type: RuntimeKind;
+  /** Runtime already usable by AiSphere (managed or on PATH). */
+  installed: boolean;
+  /** AiSphere-managed installation exists. */
+  managed: boolean;
+  /** Compatible installation found elsewhere on this system. */
+  external?: ExternalRuntimeInstall;
+  /** WSL status, only for Docker on Windows. */
+  wsl?: WindowsWslStatus;
+}
+
+export interface RuntimeUseExistingRequest {
+  type: RuntimeKind;
+  path: string;
+}
+
 
 /** Detailed information shown on the runtime details page. */
 export interface RuntimeDetail {
@@ -81,6 +125,8 @@ export interface RuntimeDetail {
   installDir: string;
   installDirExists: boolean;
   executable?: string;
+  /** Compatible installation found outside the AiSphere data folder. */
+  external?: ExternalRuntimeInstall;
   /** PATH entries owned by this runtime installation. */
   pathEntries: string[];
   engine?: {
@@ -331,6 +377,7 @@ export type SettingChannel =
 
 export type SystemChannel =
   | typeof SYSTEM_INFO | typeof RUNTIME_CHECK | typeof RUNTIME_INSTALL | typeof RUNTIME_UNINSTALL
+  | typeof RUNTIME_INSTALL_CHECK | typeof RUNTIME_USE_EXISTING
   | typeof RUNTIME_DETAIL | typeof RUNTIME_ENGINE_STATUS | typeof RUNTIME_ENGINE_START | typeof RUNTIME_ENGINE_STOP
   | typeof RUNTIME_INSTALL_ABORT | typeof RUNTIME_INSTALL_INPUT | typeof RUNTIME_INSTALL_RESIZE
   | typeof RUNTIME_INSTALL_STATUS
