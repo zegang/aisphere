@@ -64,9 +64,40 @@ try {
         $builderArgs += @('--config', $stagingConfig)
     }
 
+    $targetFolder = if ($Arch -eq 'x64') { 'win-unpacked' } else { "win-$Arch-unpacked" }
+    $releaseDir = Join-Path $script:ProjectRoot 'release'
+    $targetApp = Join-Path $releaseDir $targetFolder
+    $dataKeep = $null
+    $preservedDataDirs = @()
+
     Push-Location $script:ProjectRoot
     try {
         $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+
+        if (-not $fastDebugBuild -and (Test-Path -LiteralPath $targetApp -PathType Container)) {
+            # electron-builder empties win-unpacked before packaging, so move the
+            # local app data out of the output folder and restore it afterwards.
+            $runningApp = Get-Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.Path -and $_.Path -like "$targetApp\*" }
+            if ($runningApp) {
+                $runningApp | Stop-Process -Force
+                Start-Sleep -Seconds 2
+            }
+
+            $dataKeep = Join-Path $script:ProjectRoot ('.build-data-keep-' + [Guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Path $dataKeep -Force | Out-Null
+            foreach ($name in @('apps', 'db', 'downloads', 'log', 'logs', 'runtimes')) {
+                $source = Join-Path $targetApp $name
+                if (Test-Path -LiteralPath $source) {
+                    Move-Item -LiteralPath $source -Destination (Join-Path $dataKeep $name)
+                    $preservedDataDirs += $name
+                }
+            }
+            if ($preservedDataDirs.Count -gt 0) {
+                Write-Host "    Preserving local data folders: $($preservedDataDirs -join ', ')" -ForegroundColor Gray
+            }
+        }
+
         & $script:YarnCmd @builderArgs
         if ($LASTEXITCODE -ne 0) { throw "electron-builder failed (exit code $LASTEXITCODE)." }
 
@@ -96,6 +127,22 @@ try {
     }
     finally {
         Pop-Location
+        if ($dataKeep -and (Test-Path -LiteralPath $dataKeep -PathType Container)) {
+            New-Item -ItemType Directory -Path $targetApp -Force | Out-Null
+            foreach ($name in $preservedDataDirs) {
+                $source = Join-Path $dataKeep $name
+                if (-not (Test-Path -LiteralPath $source)) { continue }
+                $destination = Join-Path $targetApp $name
+                if (Test-Path -LiteralPath $destination) {
+                    Remove-Item -LiteralPath $destination -Recurse -Force
+                }
+                Move-Item -LiteralPath $source -Destination $destination
+            }
+            Remove-Item -LiteralPath $dataKeep -Recurse -Force
+            if ($preservedDataDirs.Count -gt 0) {
+                Write-Host "    Restored local data folders: $($preservedDataDirs -join ', ')" -ForegroundColor Gray
+            }
+        }
         if ($stagingConfig -and (Test-Path -LiteralPath $stagingConfig -PathType Leaf)) {
             Remove-Item -LiteralPath $stagingConfig -Force
         }

@@ -1,6 +1,6 @@
 // Electron preload script - exposes limited API to renderer
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge: preloadContextBridge, ipcRenderer: preloadIpcRenderer } = require('electron');
 
 // Renderer callbacks are wrapped before being handed to ipcRenderer so the
 // Electron event object never crosses the bridge. Keep the wrappers so that
@@ -9,10 +9,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 const listenersByChannel = new Map<string, Map<(...args: unknown[]) => void, (...args: unknown[]) => void>>();
 
 // Expose a safe API to the renderer
-contextBridge.exposeInMainWorld('electron', {
+preloadContextBridge.exposeInMainWorld('electron', {
   // IPC client — payload-style for safety
-  invoke: (channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload),
-  send: (channel: string, payload?: unknown) => ipcRenderer.send(channel, payload),
+  invoke: (channel: string, payload?: unknown) => preloadIpcRenderer.invoke(channel, payload),
+  send: (channel: string, payload?: unknown) => preloadIpcRenderer.send(channel, payload),
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     let channelListeners = listenersByChannel.get(channel);
     if (!channelListeners) {
@@ -23,18 +23,18 @@ contextBridge.exposeInMainWorld('electron', {
     // Registering the same callback twice should not cause duplicate delivery.
     const existing = channelListeners.get(callback);
     if (existing) {
-      ipcRenderer.removeListener(channel, existing);
+      preloadIpcRenderer.removeListener(channel, existing);
     }
 
     const wrapper = (_event: any, ...args: unknown[]) => callback(...args);
     channelListeners.set(callback, wrapper);
-    ipcRenderer.on(channel, wrapper);
+    preloadIpcRenderer.on(channel, wrapper);
   },
   removeListener: (channel: string, callback: (...args: unknown[]) => void) => {
     const channelListeners = listenersByChannel.get(channel);
     const wrapper = channelListeners?.get(callback);
     if (!wrapper) return;
-    ipcRenderer.removeListener(channel, wrapper);
+    preloadIpcRenderer.removeListener(channel, wrapper);
     channelListeners?.delete(callback);
     if (channelListeners?.size === 0) {
       listenersByChannel.delete(channel);
@@ -42,7 +42,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
 
   // Window controls
-  minimizeWindow: () => ipcRenderer.send('window:minimize'),
-  maximizeWindow: () => ipcRenderer.send('window:maximize'),
-  closeWindow: () => ipcRenderer.send('window:close'),
+  minimizeWindow: () => preloadIpcRenderer.send('window:minimize'),
+  maximizeWindow: () => preloadIpcRenderer.send('window:maximize'),
+  closeWindow: () => preloadIpcRenderer.send('window:close'),
 });

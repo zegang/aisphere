@@ -11,6 +11,25 @@ import { getDataRootDir } from '../utils/app-paths';
 
 const execAsync = promisify(exec);
 
+/**
+ * Run the first command that succeeds. Windows 11 removed `wmic`, so each
+ * query keeps a PowerShell CIM fallback for current installations.
+ */
+async function execFirst(commands: string[]): Promise<string> {
+  let lastError: unknown;
+  for (const command of commands) {
+    try {
+      const { stdout } = await execAsync(command, { windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
+      return stdout;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+const POWERSHELL_UTF8 = '[Console]::OutputEncoding=[Text.Encoding]::UTF8; ';
+
 export class SystemService implements Service {
   name = ServiceName.SystemService;
 
@@ -33,8 +52,11 @@ export class SystemService implements Service {
       const gpus: { model: string }[] = [];
       try {
         if (platform === 'win32') {
-          const { stdout } = await execAsync('wmic path win32_VideoController get name');
-          stdout.split('\n').slice(1).filter(l => l.trim()).forEach(name => gpus.push({ model: name.trim() }));
+          const stdout = await execFirst([
+            'wmic path win32_VideoController get name',
+            `powershell -NoProfile -NonInteractive -Command "${POWERSHELL_UTF8}(Get-CimInstance Win32_VideoController).Name"`,
+          ]);
+          stdout.split('\n').filter(l => l.trim() && l.trim().toLowerCase() !== 'name').forEach(name => gpus.push({ model: name.trim() }));
         } else if (platform === 'darwin') {
           const { stdout } = await execAsync("system_profiler SPDisplaysDataType | grep 'Chipset Model' | cut -d: -f2");
           stdout.split('\n').filter(l => l.trim()).forEach(name => gpus.push({ model: name.trim() }));
@@ -53,8 +75,11 @@ export class SystemService implements Service {
       const disks: { name: string; mount: string; size: number; free: number }[] = [];
       try {
         if (platform === 'win32') {
-          const { stdout } = await execAsync('wmic logicaldisk get caption,size,freespace');
-          stdout.split('\n').slice(1).filter(l => l.trim()).forEach(line => {
+          const stdout = await execFirst([
+            'wmic logicaldisk get caption,size,freespace',
+            `powershell -NoProfile -NonInteractive -Command "${POWERSHELL_UTF8}Get-CimInstance Win32_LogicalDisk | ForEach-Object { $_.DeviceID + ' ' + $_.FreeSpace + ' ' + $_.Size }"`,
+          ]);
+          stdout.split('\n').filter(l => l.trim() && !/^caption\b/i.test(l.trim())).forEach(line => {
             const [name, free, size] = line.trim().split(/\s+/);
             if (size) disks.push({ name, mount: name, size: parseInt(size), free: parseInt(free) });
           });

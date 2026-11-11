@@ -448,6 +448,13 @@ function Invoke-AisphereViteBuild {
     Write-Step 'Building the renderer, main process and preload script'
     Push-Location $script:ProjectRoot
     try {
+        # Vite does not empty dist-electron (it is written by the electron
+        # plugin), so stale chunks would otherwise be packaged into app.asar.
+        $electronOut = Join-Path $script:ProjectRoot 'dist-electron'
+        if (Test-Path -LiteralPath $electronOut -PathType Container) {
+            Remove-Item -LiteralPath $electronOut -Recurse -Force
+        }
+
         & $YarnCmd vite build
         if ($LASTEXITCODE -ne 0) { throw "vite build failed (exit code $LASTEXITCODE)." }
 

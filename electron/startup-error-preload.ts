@@ -1,6 +1,6 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge: startupErrorContextBridge, ipcRenderer: startupErrorIpcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('startupError', {
-  copy: () => ipcRenderer.invoke('startup-error:copy'),
-  exit: () => ipcRenderer.invoke('startup-error:exit'),
+startupErrorContextBridge.exposeInMainWorld('startupError', {
+  copy: () => startupErrorIpcRenderer.invoke('startup-error:copy'),
+  exit: () => startupErrorIpcRenderer.invoke('startup-error:exit'),
 });

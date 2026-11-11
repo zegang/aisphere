@@ -1084,10 +1084,8 @@ export class RuntimeService implements Service {
         case 'windows-wsl2':
           await this.prepareWindowsWsl2(session, emit);
           break;
-        default: {
-          const unsupported: never = action;
-          throw new Error(`Unsupported runtime pre-install action: ${JSON.stringify(unsupported)}`);
-        }
+        default:
+          throw new Error(`Unsupported runtime pre-install action: ${JSON.stringify(action)}`);
       }
     }
   }

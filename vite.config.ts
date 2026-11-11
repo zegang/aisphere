@@ -21,7 +21,11 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', 'node-pty'],
+              // `sharp` ships platform-specific native binaries. Bundling it
+              // breaks its dynamic require of `@img/sharp-*/sharp.node`, so keep
+              // it external and let Node resolve it from the packaged
+              // node_modules (electron-builder unpacks the .node files).
+              external: ['electron', 'node-pty', 'sharp'],
             },
           },
           resolve: {
