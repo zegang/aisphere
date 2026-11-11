@@ -5,6 +5,7 @@ import { ArrowLeft, Download, AppWindow, Calendar, Shield, Cpu, Layout, Tag, Fol
 import { useTranslation } from '@/i18n';
 import { AppInstallControls } from '@/components/AppInstallControls';
 import { ApplicationIcon } from '@/components/ApplicationIcon';
+import { CopyableError } from '@/components/CopyableError';
 import type { AppInstallStatus } from '@/shared/channel-types';
 
 export default function ExploreDetailPage() {
@@ -186,9 +187,7 @@ export default function ExploreDetailPage() {
             onStatusChange={setInstallStatus}
           />
           {installErrors[app.id] && (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-              {installErrors[app.id]}
-            </p>
+            <CopyableError message={installErrors[app.id]} />
           )}
 
           <section className="bg-light-surface dark:bg-dark-surface rounded-xl p-6 border border-light-border dark:border-dark-border shadow-sm">

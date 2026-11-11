@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pause, Play, X, RefreshCw } from 'lucide-react';
 import { EXPLORE_INSTALL_CONTROL, type AppInstallControlAction, type AppInstallStatus } from '@/shared/channel-types';
 import { useTranslation } from '@/i18n';
+import { CopyableError } from '@/components/CopyableError';
 
 interface AppInstallControlsProps {
   appId: string;
@@ -60,7 +61,7 @@ export function AppInstallControls({ appId, status, onStatusChange, compact = fa
           <X className={iconClass} /> {t('apps.install.abort')}
         </button>
       )}
-      {error && <span role="alert" className="basis-full text-xs text-red-600 dark:text-red-400">{error}</span>}
+      {error && <CopyableError inline className="basis-full" message={error} />}
     </div>
   );
 }

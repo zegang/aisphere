@@ -1,4 +1,4 @@
-import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, APP_SHUTDOWN_PROGRESS, AppInstallControlRequest, AppInstallControlResult, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallStatusEvent, RemoteAccessStatus } from '@/shared/channel-types';
+import type { APP_INSPECT, APP_OPEN_INTERACTIVE_SHELL, APP_SHUTDOWN_PROGRESS, AppInstallControlRequest, AppInstallControlResult, ENGINE_CHAT, EngineChatRequest, EngineChatResult, IpcResponse, RUNTIME_CHECK, RUNTIME_CONFIG_EXPORT, RUNTIME_CONFIG_IMPORT, RUNTIME_DETAIL, RUNTIME_ENGINE_START, RUNTIME_ENGINE_STATUS, RUNTIME_ENGINE_STOP, RUNTIME_INSTALL, RUNTIME_INSTALL_ABORT, RUNTIME_INSTALL_CHECK, RUNTIME_INSTALL_STATUS, RUNTIME_UNINSTALL, RUNTIME_USE_EXISTING, RuntimeConfigExportRequest, RuntimeConfigExportResult, RuntimeConfigImportRequest, RuntimeConfigImportResult, RuntimeDetail, RuntimeEngineStatus, RuntimeInstallCheck, RuntimeInstallStatusEvent, RuntimeUseExistingRequest, RemoteAccessStatus } from '@/shared/channel-types';
 import {
   APP_LIST, APP_DETAIL, APP_CREATE, APP_START, APP_STOP, APP_DELETE, APP_UPDATE, APP_STATUS,
   TERMINAL_INIT, TERMINAL_LOGS, TERMINAL_INPUT, TERMINAL_RESIZE, TERMINAL_CLOSE,
@@ -64,6 +64,8 @@ export type ElectronInvokePayloadMap = {
 
   [RUNTIME_CHECK]: undefined;
   [RUNTIME_INSTALL]: string;
+  [RUNTIME_INSTALL_CHECK]: string;
+  [RUNTIME_USE_EXISTING]: RuntimeUseExistingRequest;
   [RUNTIME_UNINSTALL]: string;
   [RUNTIME_DETAIL]: string;
   [RUNTIME_ENGINE_STATUS]: string;
@@ -118,6 +120,8 @@ export type ElectronInvokeResponseMap = {
 
   [RUNTIME_CHECK]: IpcResponse<{ runtimes: { type: string; installed: boolean; managed?: boolean; version?: string }[] }>;
   [RUNTIME_INSTALL]: IpcResponse<{ lifecycleRuns?: LifecycleActionRun[] }>;
+  [RUNTIME_INSTALL_CHECK]: IpcResponse<RuntimeInstallCheck>;
+  [RUNTIME_USE_EXISTING]: IpcResponse<{ type: string; path: string }>;
   [RUNTIME_UNINSTALL]: IpcResponse<{ lifecycleRuns?: LifecycleActionRun[] }>;
   [RUNTIME_DETAIL]: IpcResponse<RuntimeDetail>;
   [RUNTIME_ENGINE_STATUS]: IpcResponse<RuntimeEngineStatus>;

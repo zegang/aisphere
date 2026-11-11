@@ -4,6 +4,7 @@ import { useTranslation } from '@/i18n';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { useExploreStore } from '@/stores/exploreStore';
 import { useRuntimeStore } from '@/stores/runtimeStore';
+import { CopyableError } from '@/components/CopyableError';
 
 const runtimeLabel = (runtime: string) => runtime.charAt(0).toUpperCase() + runtime.slice(1);
 
@@ -22,9 +23,18 @@ export function RuntimeAutoInstallDialog() {
       try {
         setView('runtimes');
         const runtimeStore = useRuntimeStore.getState();
-        await runtimeStore.installRuntime(prompt.runtime);
+        const installed = await runtimeStore.installRuntime(prompt.runtime, { context: prompt.app.name });
 
         const runtime = useRuntimeStore.getState().statuses.find((item) => item.type === prompt.runtime);
+        if (!installed) {
+          const status = useRuntimeStore.getState().installs[prompt.runtime];
+          if (status?.state !== 'failed') {
+            // The user declined to reuse or reinstall the runtime.
+            setPrompt(null);
+            return;
+          }
+          throw new Error(status?.message || t('runtimeAutoInstall.failed', { runtime: runtimeLabel(prompt.runtime) }));
+        }
         if (!runtime?.installed) {
           const status = useRuntimeStore.getState().installs[prompt.runtime];
           throw new Error(status?.message || t('runtimeAutoInstall.failed', { runtime: runtimeLabel(prompt.runtime) }));
@@ -85,7 +95,7 @@ export function RuntimeAutoInstallDialog() {
 
         <div className="px-5 py-4 text-sm">
           {prompt.stage === 'error' ? (
-            <p role="alert" className="text-red-600 dark:text-red-400 break-words">{prompt.error}</p>
+            <CopyableError message={prompt.error || t('runtimeAutoInstall.failed', { runtime })} />
           ) : (
             <p className="text-light-subtle dark:text-dark-subtle">
               {t('runtimeAutoInstall.message', { runtime, app: prompt.app.name })}

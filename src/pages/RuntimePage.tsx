@@ -41,6 +41,7 @@ import {
 } from '@/stores/runtimeStore';
 import { useAiSphereStore } from '@/stores/aiSphereStore';
 import { useTranslation } from '@/i18n';
+import { CopyableError } from '@/components/CopyableError';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
@@ -385,9 +386,7 @@ function RuntimeCard({
       )}
 
       {runtime.engineError && (
-        <p className="mb-3 text-[11px] text-red-600 dark:text-red-400 break-words">
-          {runtime.engineError}
-        </p>
+        <CopyableError inline className="mb-3" message={runtime.engineError} />
       )}
 
       {active ? (
@@ -700,7 +699,7 @@ export default function RuntimePage() {
               {exportError && (
                 <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200/60 dark:border-red-500/20">
                   <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{exportError}</p>
+                  <CopyableError inline className="min-w-0 flex-1" message={exportError} />
                 </div>
               )}
             </div>
@@ -812,7 +811,7 @@ export default function RuntimePage() {
               {importError && (
                 <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200/60 dark:border-red-500/20">
                   <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{importError}</p>
+                  <CopyableError inline className="min-w-0 flex-1" message={importError} />
                 </div>
               )}
             </div>

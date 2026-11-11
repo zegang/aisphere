@@ -32,6 +32,9 @@
       "cancel": "取消",
       "updateAction": "更新脚本",
       "createAction": "创建并安装"
+    },
+    "errors": {
+      "invalidJson": "JSON 脚本格式无效"
     }
   },
   "explore": {
@@ -73,6 +76,12 @@
       "conda": "Conda",
       "native": "原生"
     },
+    "platforms": {
+      "windows": "Windows",
+      "linux": "Linux",
+      "mac": "macOS",
+      "any": "全部"
+    },
     "action": {
       "install": "安装"
     },
@@ -85,6 +94,9 @@
       "install_selected": "安装所选（{{count}}）",
       "installing": "正在安装…",
       "clear_selection": "清除选择"
+    },
+    "message": {
+      "no_apps": "没有找到符合条件的应用。"
     },
     "kinds": {
       "all": "全部",
@@ -162,15 +174,7 @@
       "apptainer": "面向 Linux 高性能计算的高性能容器方案。"
     },
     "action": {
-      "install": "安装"
-    },
-    "batch": {
-      "select_visible": "选择此页所有可安装应用",
-      "select_app": "选择 {{name}}",
-      "selected": "已选择 {{count}} 个",
-      "install_selected": "安装所选（{{count}}）",
-      "installing": "正在安装…",
-      "clear_selection": "清除选择",
+      "install": "安装",
       "start": "启动引擎",
       "starting": "正在启动…",
       "start_failed": "启动运行环境引擎失败。",
@@ -558,7 +562,29 @@
     "stop": "停止",
     "restart": "重启",
     "delete": "删除",
-    "uninstall": "卸载"
+    "uninstall": "卸载",
+    "types": {
+      "llm": "LLM",
+      "tool": "工具",
+      "agent": "智能体",
+      "dataset": "数据集",
+      "other": "其他"
+    }
+  },
+  "common": {
+    "copy": "复制",
+    "copied": "已复制",
+    "copy_error": "复制错误信息"
+  },
+  "runtimeChoice": {
+    "title": "检测到已安装的 {{runtime}}",
+    "message": "AiSphere 在此电脑上发现了现有的 {{source}} 安装。你可以直接使用它，或让 AiSphere 下载并管理自己的副本。",
+    "use_existing": "使用现有安装",
+    "install_anyway": "安装 AiSphere 副本",
+    "cancel": "取消",
+    "wsl_ready": "WSL 2 已安装并可用。",
+    "wsl_outdated": "已安装 WSL，但未配置为 WSL 2。仅当你选择安装 AiSphere 副本时才会更新它。",
+    "wsl_missing": "未检测到 WSL 2。仅当你选择安装 AiSphere 副本时才会安装它。"
   },
   "runtimePrompt": {
     "start_title": "启动 {{runtime}}？",

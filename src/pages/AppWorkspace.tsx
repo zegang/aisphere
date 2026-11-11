@@ -11,6 +11,7 @@ import { AppInstallControls } from '@/components/AppInstallControls';
 import { ApplicationIcon } from '@/components/ApplicationIcon';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
 import { AppUninstallDialog } from '@/components/AppUninstallDialog';
+import { CopyableError } from '@/components/CopyableError';
 import type { AppInstallStatus } from '@/shared/channel-types';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
@@ -393,7 +394,7 @@ export default function AppWorkspace() {
               <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
               <div className="flex-1">
                 <h4 className="font-bold text-sm">{t('apps.workspace.operation_error')}</h4>
-                <p className="text-xs mt-1 opacity-90 leading-relaxed font-mono break-all">{app.error}</p>
+                <CopyableError inline className="mt-1" message={app.error} />
               </div>
               <button
                 onClick={() => updateApplication(app.id, { error: undefined })}

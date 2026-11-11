@@ -14,7 +14,7 @@ import { SandboxService } from './SandboxService';
 import { Downloader } from '../utils/downloader';
 import { getDataPath } from '../utils/app-paths';
 import { compressDirectory, extractArchive, fileStamp, collectSpecJsonFiles } from '../utils/spec-io';
-import { getBuiltInRuntimeConfig, getBuiltInRuntimeInstall } from '../utils/builtin-runtimes';
+import { getBuiltInDockerRegistryMirrors, getBuiltInRuntimeConfig, getBuiltInRuntimeInstall } from '../utils/builtin-runtimes';
 import { LifecycleActionRunner } from '../utils/lifecycle-actions';
 import type { AppInstallControl } from '../utils/app-install-control';
 import { DbStoreService } from './DbStoreService';
@@ -795,16 +795,21 @@ export class RuntimeService implements Service {
       const userProfile = process.env.USERPROFILE;
       if (type === 'docker') {
         if (programFiles) addCandidate(join(programFiles, 'Docker', 'Docker', 'resources', 'bin', fileName));
-        if (localAppData) addCandidate(join(localAppData, 'Docker', 'Docker', 'resources', 'bin', fileName));
+        if (localAppData) {
+          addCandidate(join(localAppData, 'Docker', 'Docker', 'resources', 'bin', fileName));
+          addCandidate(join(localAppData, 'Programs', 'Docker', 'Docker', 'resources', 'bin', fileName));
+        }
       } else if (type === 'podman') {
         if (programFiles) addCandidate(join(programFiles, 'RedHat', 'Podman', fileName));
       } else if (type === 'conda') {
-        for (const root of [userProfile, programData]) {
+        for (const root of [userProfile, programData, localAppData]) {
           if (!root) continue;
           addCandidate(join(root, 'miniconda3', 'Scripts', fileName));
           addCandidate(join(root, 'anaconda3', 'Scripts', fileName));
           addCandidate(join(root, 'Miniconda3', 'Scripts', fileName));
           addCandidate(join(root, 'Anaconda3', 'Scripts', fileName));
+          addCandidate(join(root, 'Programs', 'miniconda3', 'Scripts', fileName));
+          addCandidate(join(root, 'Programs', 'anaconda3', 'Scripts', fileName));
         }
       }
     } else {
@@ -860,14 +865,14 @@ export class RuntimeService implements Service {
 
     let versionOutput = '';
     try {
-      versionOutput = (await this.runCapture(wsl, ['--version'])).trim();
+      versionOutput = this.normalizeNativeOutput(await this.runCapture(wsl, ['--version'])).trim();
     } catch {
       // Older inbox WSL builds do not support --version.
     }
 
     let statusOutput = '';
     try {
-      statusOutput = (await this.runCapture(wsl, ['--status'])).trim();
+      statusOutput = this.normalizeNativeOutput(await this.runCapture(wsl, ['--status'])).trim();
     } catch {
       // --status fails when WSL is installed but no distro is configured.
     }
@@ -875,15 +880,27 @@ export class RuntimeService implements Service {
     const installed = !!versionOutput || !!statusOutput;
     if (!installed) return { installed: false, ready: false };
 
+    // `wsl --version` only succeeds on the modern WSL 2 package. Otherwise
     // `wsl --status` reports the default version, e.g. "Default Version: 2"
-    // (English) or "默认版本: 2" (Chinese). A successful `wsl --version` means
-    // the modern WSL 2 package is present even when a distro is not set up yet.
+    // (English) or "默认版本: 2" (Chinese).
+    const modernWsl = /WSL[^\r\n]*\d/i.test(versionOutput);
     const explicitlyWsl1 = /(?:default\s*version|默认版本)\s*[:：]\s*1\b/i.test(statusOutput);
+    const defaultWsl2 = /(?:default\s*version|默认版本)\s*[:：]\s*2\b/i.test(statusOutput);
+
     return {
       installed: true,
-      ready: !explicitlyWsl1,
+      ready: modernWsl || (defaultWsl2 && !explicitlyWsl1),
       version: versionOutput.match(/WSL[^\r\n]*/i)?.[0]?.trim() || undefined,
     };
+  }
+
+  /**
+   * wsl.exe and several other Windows tools write UTF-16LE into redirected
+   * pipes. Node decodes those bytes as UTF-8, leaving NUL bytes between the
+   * characters, so strip them before parsing.
+   */
+  private normalizeNativeOutput(value: string): string {
+    return value.includes('\0') ? value.replace(/\0/g, '') : value;
   }
 
   private engineStarts: Map<string, Promise<RuntimeEngineStatus>> = new Map();
@@ -1362,7 +1379,7 @@ export class RuntimeService implements Service {
       '    if ($result.RestartNeeded) { $restartRequired = $true }',
       '  }',
       '}',
-      'if ($restartRequired) { Write-Output "AISPHERE_WSL_RESTART_REQUIRED"; exit 0 }',
+      'if ($restartRequired) { Write-Output "AISPHERE_WSL_RESTART_REQUIRED"; return }',
       "$virtualization = Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty VirtualizationFirmwareEnabled",
       "if ($virtualization -eq $false) { throw 'Hardware virtualization is disabled in BIOS/UEFI. Enable Intel VT-x or AMD-V, restart Windows, and retry.' }",
       "Write-Output 'Installing or updating Windows Subsystem for Linux...'",
@@ -1872,6 +1889,7 @@ export class RuntimeService implements Service {
     }
     if (process.env.LOCALAPPDATA) {
       candidates.push(join(process.env.LOCALAPPDATA, 'Docker', 'Docker', 'Docker Desktop.exe'));
+      candidates.push(join(process.env.LOCALAPPDATA, 'Programs', 'Docker', 'Docker', 'Docker Desktop.exe'));
     }
 
     for (const candidate of candidates) {
@@ -2523,7 +2541,9 @@ export class RuntimeService implements Service {
   /**
    * Ordered Docker Hub pull-through mirrors configured by the user. Reads the
    * new JSON list, falls back to the legacy single-mirror setting and migrates
-   * it so upgrades keep the user's previous choice.
+   * it so upgrades keep the user's previous choice. When nothing was ever
+   * saved, returns the mirrors bundled with resources/runtimes/docker.json,
+   * all enabled.
    */
   async getDockerRegistryMirrors(): Promise<DockerRegistryMirrorConfig[]> {
     const store = this.getSettingStore();
@@ -2538,7 +2558,11 @@ export class RuntimeService implements Service {
       key: SettingKey.DockerRegistryMirror,
     });
     const legacyValue = legacy[0]?.value;
-    if (typeof legacyValue !== 'string' || !legacyValue.trim()) return [];
+    if (typeof legacyValue !== 'string' || !legacyValue.trim()) {
+      // No user preference yet: use the mirrors bundled with the Docker
+      // runtime definition, all enabled.
+      return getBuiltInDockerRegistryMirrors();
+    }
 
     const migrated = parseDockerRegistryMirrors(legacyValue);
     if (migrated.length > 0) {

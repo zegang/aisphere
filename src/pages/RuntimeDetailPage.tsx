@@ -30,6 +30,7 @@ import { SettingKey } from '@/stores/settingStore';
 import { DOCKER_REGISTRY_MIRRORS, normalizeDockerRegistryMirrorUrl, parseDockerRegistryMirrors, type DockerRegistryMirrorConfig } from '@/shared/types';
 import { useTranslation } from '@/i18n';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
+import { CopyableError } from '@/components/CopyableError';
 
 function capitalize(type: string): string {
   return type.charAt(0).toUpperCase() + type.slice(1);
@@ -308,13 +309,13 @@ export default function RuntimeDetailPage() {
 
           {error && (
             <div className="rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-red-600 dark:text-red-300 mb-4">
-              {error}
+              <CopyableError inline message={error} />
             </div>
           )}
 
           {actionError && (
             <div className="rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-900/20 px-4 py-3 text-red-600 dark:text-red-300 mb-4">
-              {actionError}
+              <CopyableError inline message={actionError} />
             </div>
           )}
 
@@ -492,7 +493,7 @@ export default function RuntimeDetailPage() {
                   )}
 
                   {dockerMirrorError && (
-                    <p role="alert" className="mt-2 text-sm text-red-500">{dockerMirrorError}</p>
+                    <CopyableError inline className="mt-2" message={dockerMirrorError} />
                   )}
                 </section>
               )}
@@ -502,7 +503,7 @@ export default function RuntimeDetailPage() {
                   redundant and untranslated. Real inspection errors while the
                   engine is up are still surfaced. */}
               {engine?.error && engine.running && (
-                <p className="text-xs text-amber-600 dark:text-amber-400">{engine.error}</p>
+                <CopyableError inline message={engine.error} />
               )}
 
               {data.pathEntries.length > 0 && (

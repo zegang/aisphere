@@ -35,6 +35,93 @@ export interface DownloadResult {
   checksumValidated?: boolean;
 }
 
+interface ErrorLike {
+  name?: unknown;
+  message?: unknown;
+  code?: unknown;
+  syscall?: unknown;
+  hostname?: unknown;
+  address?: unknown;
+  port?: unknown;
+  status?: unknown;
+  statusText?: unknown;
+  response?: { status?: unknown; statusText?: unknown };
+  cause?: unknown;
+  errors?: unknown;
+}
+
+/** `connect 1.2.3.4:443` for a low-level socket error, or an empty string. */
+function formatErrorTarget(err: ErrorLike): string {
+  const syscall = typeof err.syscall === 'string' ? err.syscall : '';
+  const host = typeof err.hostname === 'string' && err.hostname
+    ? err.hostname
+    : typeof err.address === 'string'
+      ? err.address
+      : '';
+  const port = typeof err.port === 'number' || typeof err.port === 'string' ? String(err.port) : '';
+  const endpoint = host && port ? `${host}:${port}` : host;
+  return [syscall, endpoint].filter(Boolean).join(' ');
+}
+
+/**
+ * Collects every useful detail from an error raised while downloading.
+ * Network failures often arrive as an AggregateError with an empty message
+ * whose real causes live in nested `errors`/`cause` entries (e.g.
+ * `connect ETIMEDOUT 31.13.94.41:443`). Without walking those the UI only had
+ * "Unknown error" to show.
+ */
+function describeError(error: unknown, seen: Set<unknown> = new Set()): string[] {
+  if (error === null || error === undefined) return [];
+  if (typeof error === 'string') return error.trim() ? [error.trim()] : [];
+  if (typeof error !== 'object') return [String(error)];
+  if (seen.has(error)) return [];
+  seen.add(error);
+
+  const err = error as ErrorLike;
+  const details: string[] = [];
+
+  const response = err.response;
+  if (response && typeof response.status === 'number') {
+    const statusText = typeof response.statusText === 'string' && response.statusText ? ` ${response.statusText}` : '';
+    details.push(`HTTP ${response.status}${statusText}`);
+  } else if (typeof err.status === 'number') {
+    const statusText = typeof err.statusText === 'string' && err.statusText ? ` ${err.statusText}` : '';
+    details.push(`HTTP ${err.status}${statusText}`);
+  }
+
+  const message = typeof err.message === 'string' ? err.message.trim() : '';
+  if (message) details.push(message);
+
+  const children: unknown[] = [];
+  if (Array.isArray(err.errors)) children.push(...err.errors);
+  if (err.cause !== undefined) children.push(err.cause);
+
+  if (children.length > 0) {
+    // Parent wrappers (AggregateError/AxiosError) usually only repeat the
+    // child code, so recurse and let the leaves describe the real failure.
+    for (const child of children) details.push(...describeError(child, seen));
+  } else if (typeof err.code === 'string' && err.code) {
+    // Prefer the message when it already spells out the code (e.g.
+    // "connect ETIMEDOUT 1.2.3.4:443") to avoid duplicating it.
+    if (!message.includes(err.code)) {
+      const target = formatErrorTarget(err);
+      details.push(target ? `${err.code} (${target})` : err.code);
+    }
+  } else if (typeof err.syscall === 'string' && err.syscall) {
+    details.push(formatErrorTarget(err));
+  } else if (!message && typeof err.name === 'string' && err.name && err.name !== 'Error') {
+    details.push(err.name);
+  }
+
+  return details;
+}
+
+/** Human-readable, deduplicated description of a download failure. */
+export function describeDownloadError(error: unknown): string {
+  const details = [...new Set(describeError(error).filter((item) => item.length > 0))];
+  return details.length > 0 ? details.join(' | ') : 'Unknown error';
+}
+
 export class Downloader {
   private logger: LogService;
 
@@ -59,13 +146,13 @@ export class Downloader {
       return result;
     }
 
+    const attempts = 3;
     try {
       await fs.mkdir(destinationFolder, { recursive: true });
 
       // Downloads from some CDNs are flaky (connection resets mid-transfer).
       // Retry a few times before surfacing a failure to the user.
       let lastError: unknown;
-      const attempts = 3;
       for (let attempt = 1; attempt <= attempts; attempt++) {
         try {
           result = await this.handleSingleDownload(url, destinationFolder, options);
@@ -75,7 +162,7 @@ export class Downloader {
           lastError = error;
           if (options?.signal?.aborted) break;
           if (attempt < attempts) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = describeDownloadError(error);
             this.logger.warn(`Download attempt ${attempt}/${attempts} failed for ${url}: ${message}. Retrying...`, 'Downloader');
             await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
           }
@@ -97,8 +184,10 @@ export class Downloader {
         }
       }
     } catch (error: any) {
-      const errorMessage = (error instanceof Error ? error.message : String(error)) || 'Unknown error';
-      this.logger.error(`Failed to download ${url}: ${errorMessage}`, 'Downloader');
+      const aborted = options?.signal?.aborted === true;
+      const detail = aborted ? 'Download aborted' : describeDownloadError(error);
+      const errorMessage = aborted ? detail : `Could not download ${url}: ${detail}`;
+      this.logger.error(`Failed to download ${url} after ${attempts} attempt(s): ${detail}`, 'Downloader');
       result.success = false;
       result.error = errorMessage;
       result.filePath = null;

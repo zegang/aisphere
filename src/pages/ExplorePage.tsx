@@ -7,6 +7,7 @@ import { EXPLORE_EXPORT, EXPLORE_IMPORT, SYSTEM_INFO } from '@/shared/channel-ty
 import type { ExploreExportResult, ExploreImportResult } from '@/shared/channel-types';
 import { AppInstallControls } from '@/components/AppInstallControls';
 import { ApplicationIcon } from '@/components/ApplicationIcon';
+import { CopyableError } from '@/components/CopyableError';
 import type { AppInstallStatus } from '@/shared/channel-types';
 import type { SystemInfoResponse } from '@/types/api';
 
@@ -459,7 +460,7 @@ export default function ExplorePage() {
                   </button>
                 </>
               )}
-              {batchInstallError && <p role="alert" className="basis-full px-1 text-sm text-red-600 dark:text-red-400">{batchInstallError}</p>}
+              {batchInstallError && <CopyableError inline className="basis-full px-1" message={batchInstallError} />}
             </>
           )}
         </div>
@@ -625,9 +626,7 @@ export default function ExplorePage() {
               </div>
             )}
             {installErrors[app.id] && (
-              <p role="alert" className="mt-2 text-xs text-red-600 dark:text-red-400">
-                {installErrors[app.id]}
-              </p>
+              <CopyableError inline className="mt-2" message={installErrors[app.id]} />
             )}
           </div>
         ))}
@@ -731,7 +730,7 @@ export default function ExplorePage() {
               {exportError && (
                 <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200/60 dark:border-red-500/20">
                   <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{exportError}</p>
+                  <CopyableError inline className="min-w-0 flex-1" message={exportError} />
                 </div>
               )}
             </div>
@@ -843,7 +842,7 @@ export default function ExplorePage() {
               {importError && (
                 <div className="flex items-start gap-2.5 p-3 rounded-xl bg-red-50 dark:bg-red-900/10 border border-red-200/60 dark:border-red-500/20">
                   <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-red-600 dark:text-red-400 break-words">{importError}</p>
+                  <CopyableError inline className="min-w-0 flex-1" message={importError} />
                 </div>
               )}
             </div>

@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Cpu, Loader2, Play, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useAppStore } from '@/stores/appStore';
+import { CopyableError } from '@/components/CopyableError';
 
 export interface EngineStartRequest {
   appId: string;
@@ -142,9 +143,9 @@ export function EngineStartDialog({ request, onReady, onClose }: Props) {
           )}
 
           {stage === 'error' && (
-            <div className="text-sm text-light-subtle dark:text-dark-subtle space-y-1">
+            <div className="text-sm text-light-subtle dark:text-dark-subtle space-y-2">
               <p className="text-red-500 dark:text-red-400">{t('workspace.engines.start_failed')}</p>
-              {error && <p className="text-xs break-words line-clamp-3" title={error}>{error}</p>}
+              {error && <CopyableError inline message={error} />}
             </div>
           )}
         </div>

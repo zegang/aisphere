@@ -571,6 +571,21 @@
       "other": "Other"
     }
   },
+  "common": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "copy_error": "Copy error text"
+  },
+  "runtimeChoice": {
+    "title": "{{runtime}} is already installed",
+    "message": "AiSphere found an existing {{source}} installation on this computer. Use it, or let AiSphere download and manage its own copy.",
+    "use_existing": "Use existing installation",
+    "install_anyway": "Install AiSphere copy",
+    "cancel": "Cancel",
+    "wsl_ready": "WSL 2 is already installed and ready.",
+    "wsl_outdated": "WSL is installed but not configured for WSL 2. AiSphere will update it only if you install its own copy.",
+    "wsl_missing": "WSL 2 was not detected. AiSphere will install it only if you choose its own copy."
+  },
   "runtimePrompt": {
     "start_title": "Start {{runtime}}?",
     "error_title": "Could not start {{runtime}}",

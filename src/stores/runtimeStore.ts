@@ -328,6 +328,8 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
 
   installRuntime: async (type, options) => {
     ensureSubscriptions();
+    // Only one preflight decision can be pending at a time.
+    if (get().installChoice) return false;
     const current = get().installs[type];
     if (isRuntimeInstallActive(current)) {
       set({ logPanelType: type, logPanelDismissed: false });
@@ -354,9 +356,20 @@ export const useRuntimeStore = create<RuntimeStore>((set, get) => ({
           pendingInstallChoice = null;
           set({ installChoice: null });
 
-          if (decision === 'cancel') return false;
+          if (decision === 'cancel') {
+            // Drop a stale failure so callers can distinguish "user declined"
+            // from "installation failed" when the same runtime is retried.
+            set((state) => {
+              if (state.installs[type]?.state !== 'failed') return state;
+              const installs = { ...state.installs };
+              delete installs[type];
+              return { installs };
+            });
+            return false;
+          }
           if (decision === 'existing') {
-            set({ logPanelType: type, logPanelDismissed: false });
+            // Adopting an existing install is instantaneous, so it does not open
+            // the installation terminal. Record it in the buffer for later.
             append(`\r\nUsing the existing ${check.external.source} installation at ${check.external.path}\r\n`);
             const useResult = await window.electron.invoke(RUNTIME_USE_EXISTING, {
               type,

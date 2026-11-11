@@ -11,6 +11,7 @@ import { join } from 'path';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import type { RuntimeKind } from '../../src/shared/channel-types';
 import type { LifecycleAction, LifecycleActionHooks } from '../../src/types/api';
+import { DOCKER_REGISTRY_MIRRORS, normalizeDockerRegistryMirrors, type DockerRegistryMirrorConfig } from '../../src/shared/types';
 
 export interface BuiltInRuntimeInstallTarget {
   /** Download URL for this platform/arch. */
@@ -52,6 +53,8 @@ export interface BuiltInRuntimeConfig extends LifecycleActionHooks {
   hasEngine: boolean;
   /** Default autoStart preference when the user never chose one. */
   autoStart: 'always' | 'never' | null;
+  /** Docker Hub pull-through mirrors enabled by default for this runtime. */
+  registryMirrors: DockerRegistryMirrorConfig[];
   preInstall?: BuiltInRuntimePreInstall;
   install?: BuiltInRuntimeInstall;
   engine?: BuiltInRuntimeEngine;
@@ -146,6 +149,7 @@ function normalize(raw: unknown): BuiltInRuntimeConfig | null {
     name: typeof spec.name === 'string' && spec.name ? spec.name : type,
     hasEngine: typeof spec.hasEngine === 'boolean' ? spec.hasEngine : type === 'docker' || type === 'podman',
     autoStart,
+    registryMirrors: normalizeDockerRegistryMirrors(spec.registryMirrors),
     preInstall: readPreInstall(spec.preInstall),
     postInstallActions: readLifecycleActions(spec.postInstallActions),
     postStopActions: readLifecycleActions(spec.postStopActions),
@@ -197,6 +201,18 @@ export function getBuiltInRuntimeConfigs(): BuiltInRuntimeConfig[] {
 /** Built-in configuration for one runtime type, if one is bundled. */
 export function getBuiltInRuntimeConfig(type: string): BuiltInRuntimeConfig | undefined {
   return load().get(type);
+}
+
+/**
+ * Docker Hub pull-through mirrors shipped in `resources/runtimes/docker.json`.
+ * They are enabled by default for new profiles; users can disable, reorder or
+ * remove them on the Docker runtime page.
+ */
+export function getBuiltInDockerRegistryMirrors(): DockerRegistryMirrorConfig[] {
+  const configured = getBuiltInRuntimeConfig('docker')?.registryMirrors ?? [];
+  if (configured.length > 0) return configured;
+  // Keep a usable default if a packaged build is missing the runtime file.
+  return normalizeDockerRegistryMirrors(DOCKER_REGISTRY_MIRRORS);
 }
 
 /**

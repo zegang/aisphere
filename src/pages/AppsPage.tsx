@@ -11,6 +11,7 @@ import { AppInstallControls } from '@/components/AppInstallControls';
 import { ApplicationIcon } from '@/components/ApplicationIcon';
 import { LifecycleHistory } from '@/components/LifecycleHistory';
 import { AppUninstallDialog } from '@/components/AppUninstallDialog';
+import { CopyableError } from '@/components/CopyableError';
 
 export default function AppsPage() {
   const { t, i18n } = useTranslation();
@@ -332,7 +333,7 @@ export default function AppsPage() {
                   {batchBusy && <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />}
                 </>
               )}
-              {batchError && <p role="alert" className="basis-full text-sm text-red-600 dark:text-red-400">{batchError}</p>}
+              {batchError && <CopyableError inline className="basis-full" message={batchError} />}
             </>
           )}
         </div>
@@ -661,7 +662,7 @@ export default function AppsPage() {
                 <p className="text-sm text-light-subtle dark:text-dark-subtle">{t('apps.nas.stopped')}</p>
               )}
 
-              {nasError && <p role="alert" className="text-sm text-red-600 dark:text-red-400 break-words">{nasError}</p>}
+              {nasError && <CopyableError message={nasError} />}
 
               <div className="flex justify-end gap-2 pt-2">
                 {nasStatus?.running ? (

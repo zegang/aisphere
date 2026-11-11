@@ -1,5 +1,5 @@
 // Electron application process implementation
-import { app, BrowserWindow, ipcMain, shell, dialog, Tray, Menu, nativeImage, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, clipboard, Tray, Menu, nativeImage, type OpenDialogOptions } from 'electron';
 import path, { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { registerHandlers } from './ipc/handlers';
@@ -21,6 +21,7 @@ import { LanNasService } from './services/LanNasService';
 import { RemoteAccessService } from './services/RemoteAccessService';
 import { captureRemoteIpcHandlers } from './utils/remote-ipc-registry';
 import { getDataRootDir } from './utils/app-paths';
+import { getBuiltInDockerRegistryMirrors } from './utils/builtin-runtimes';
 import { showStartupError } from './startup-error';
 
 if (process.platform === 'linux') {
@@ -234,6 +235,13 @@ function initServices(): Promise<void> {
     settingService.ensureDefault(SettingKey.RootDirectory, getDataRootDir()),
     settingService.ensureDefault(SettingKey.RuntimeAutoInstall, 'ask'),
     settingService.ensureDefault(SettingKey.DockerRegistryMirror, ''),
+    // Docker mirrors bundled in resources/runtimes/docker.json are enabled by
+    // default. Seeding the list lets the runtime page show them immediately,
+    // while an explicitly saved (including empty) list always wins afterwards.
+    settingService.ensureDefault(
+      SettingKey.DockerRegistryMirrors,
+      JSON.stringify(getBuiltInDockerRegistryMirrors()),
+    ),
     settingService.ensureDefault(SettingKey.StopRuntimesOnExit, 'always'),
   ])).then(async () => {
     await (ServiceContainer.getInstance().get(ServiceName.RuntimeService) as RuntimeService)
@@ -388,14 +396,28 @@ app.on('before-quit', (event) => {
     shutdownInProgress = false;
     shutdownComplete = true;
     app.quit();
-  })().catch((error) => {
+  })().catch(async (error) => {
     console.error('AiSphere shutdown failed:', error);
     isQuitting = false;
     shutdownInProgress = false;
     shutdownPromise = null;
-    dialog.showErrorBox(
-      'AiSphere could not quit cleanly',
-      error instanceof Error ? error.message : String(error),
-    );
+    const details = error instanceof Error ? (error.stack ?? error.message) : String(error);
+    const isChinese = app.getLocale().toLowerCase().startsWith('zh');
+    try {
+      const result = await dialog.showMessageBox({
+        type: 'error',
+        title: isChinese ? 'AiSphere 无法正常退出' : 'AiSphere could not quit cleanly',
+        message: isChinese ? 'AiSphere 无法正常退出' : 'AiSphere could not quit cleanly',
+        detail: details,
+        buttons: [isChinese ? '复制详细信息' : 'Copy details', isChinese ? '关闭' : 'Close'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (result.response === 0) clipboard.writeText(details);
+    } catch (dialogError) {
+      console.error('Could not show the shutdown error dialog:', dialogError);
+      clipboard.writeText(details);
+    }
   });
 });

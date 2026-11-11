@@ -6,6 +6,7 @@ import { useTranslation } from '@/i18n';
 import { Themes } from '@/shared/types';
 import { REMOTE_ACCESS_STATUS, SETTING_GET, SETTING_UPDATE, UTIL_OPEN_PATH, UTIL_SELECT_DIRECTORY, type RemoteAccessStatus } from '@/shared/channel-types';
 import { Copy, Folder, FolderOpen, Globe } from 'lucide-react';
+import { CopyableError } from '@/components/CopyableError';
 
 const RUNTIME_OPTIONS = ['docker', 'podman', 'conda', 'apptainer'] as const;
 const runtimeAutoStartKey = (runtime: string) => `runtime.autoStart.${runtime}`;
@@ -233,11 +234,13 @@ export default function SettingsPage() {
             </div>
           )}
           {remoteAccess && !remoteAccess.listening && (remoteAccess.enabled || remoteAccess.error) && (
-            <p role="alert" className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-              {remoteAccess.error || t('settings.network_access_not_listening')}
-            </p>
+            <CopyableError
+              inline
+              className="mt-2"
+              message={remoteAccess.error || t('settings.network_access_not_listening')}
+            />
           )}
-          {remoteAccessError && <p role="alert" className="mt-2 text-xs text-red-500">{remoteAccessError}</p>}
+          {remoteAccessError && <CopyableError inline className="mt-2" message={remoteAccessError} />}
         </section>
 
         <div>
@@ -294,7 +297,7 @@ export default function SettingsPage() {
             </button>
           </div>
           {rootDirError && (
-            <p className="mt-1 text-sm text-red-500">{rootDirError}</p>
+            <CopyableError inline className="mt-1" message={rootDirError} />
           )}
         </div>
 
@@ -340,7 +343,7 @@ export default function SettingsPage() {
             <option value="never">{t('settings.runtime_install_never')}</option>
           </select>
           {runtimeAutoInstallError && (
-            <p role="alert" className="mt-2 text-sm text-red-500">{runtimeAutoInstallError}</p>
+            <CopyableError inline className="mt-2" message={runtimeAutoInstallError} />
           )}
         </div>
 
@@ -363,7 +366,7 @@ export default function SettingsPage() {
             <option value="never">{t('settings.shutdown_never')}</option>
           </select>
           {shutdownSettingError && (
-            <p role="alert" className="mt-2 text-sm text-red-500">{shutdownSettingError}</p>
+            <CopyableError inline className="mt-2" message={shutdownSettingError} />
           )}
         </div>
       </div>

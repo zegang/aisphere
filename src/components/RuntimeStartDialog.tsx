@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowDownToLine, Loader2, Play, X } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useAppStore } from '@/stores/appStore';
+import { CopyableError } from '@/components/CopyableError';
 
 const runtimeLabel = (runtime: string) => {
   const label = runtime.charAt(0).toUpperCase() + runtime.slice(1);
@@ -62,9 +63,10 @@ export function RuntimeStartDialog() {
 
         <div className="px-5 py-4 text-sm space-y-3">
           {prompt.stage === 'error' ? (
-            <p className="text-red-600 dark:text-red-400 break-words">
-              {prompt.error || t('runtimePrompt.error_fallback', { runtime: label })}
-            </p>
+            <CopyableError
+              inline
+              message={prompt.error || t('runtimePrompt.error_fallback', { runtime: label })}
+            />
           ) : prompt.stage === 'starting' ? (
             <p className="flex items-center gap-2 text-light-subtle dark:text-dark-subtle">
               <Loader2 className="w-4 h-4 animate-spin shrink-0" />
